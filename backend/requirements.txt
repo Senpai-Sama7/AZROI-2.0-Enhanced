@@ -1,0 +1,40 @@
+fastapi
+uvicorn[standard]
+python-dotenv
+google-generativeai
+websockets
+langchain-core # For potential future LangChain structures, or if OI uses it
+langchain-google-genai # For Gemini LCE if needed
+
+# Open Interpreter and its typical dependencies
+open-interpreter
+docker # Python SDK, often a dependency for Open Interpreter's code execution and gVisor setup
+
+# Google Cloud SDKs
+google-cloud-storage
+google-cloud-build
+google-cloud-run
+google-cloud-artifact-registry
+google-cloud-iam
+
+# Agent Orchestration
+crewai>=0.26.0 # Agent orchestration framework
+langchain>=0.1.0 # Used by CrewAI
+
+# Vector Storage
+qdrant-client>=1.6.0 # Replacing ChromaDB for vector storage
+
+# Caching and Routing
+redis>=5.0.0 # For LLM routing and caching
+
+# Monitoring and Auditing
+prometheus-client>=0.17.0 # For monitoring metrics
+psutil>=5.9.0 # For hardware auditing capabilities
+
+# Testing tools
+pytest>=7.4.0
+pytest-asyncio>=0.23.0
+
+# For Uvicorn auto-reload during development
+watchfiles
+requests # General utility, might be used by OI or custom tools

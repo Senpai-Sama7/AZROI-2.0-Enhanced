@@ -1,0 +1,6 @@
+{
+  "name": "Autonomous AI Architect UI",
+  "description": "A user interface to interact with and monitor an Autonomous AI Architect system. It includes features for goal input, AI-powered analysis using Gemini, and displaying system status and outputs.",
+  "requestFramePermissions": [],
+  "prompt": ""
+}

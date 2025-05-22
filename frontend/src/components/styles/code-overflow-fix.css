@@ -1,0 +1,16 @@
+/* Custom styles to fix long unbroken strings in code blocks */
+.overflow-wrap-anywhere {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+pre code {
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+
+pre {
+  max-width: 100%;
+  overflow-x: auto;
+}

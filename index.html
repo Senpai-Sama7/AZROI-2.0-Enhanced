@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Autonomous AI Architect</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Playfair+Display:wght@700&display=swap" rel="stylesheet">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class', 
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Inter', 'sans-serif'],
+            playfair: ['Playfair Display', 'serif'],
+          },
+          colors: {
+            // New theme uses generic Tailwind colors or specific CSS.
+            // Pink for buttons as per new theme's example
+            pink: {
+              500: '#ec4899', // Tailwind pink-500
+              600: '#db2777', // Tailwind pink-600
+              700: '#be185d'  // Tailwind pink-700
+            },
+            gray: { // Ensuring necessary grays are available if not default
+              200: '#e5e7eb',
+              300: '#d1d5db',
+              400: '#9ca3af',
+              500: '#6b7280',
+              600: '#4b5563',
+              700: '#374151',
+            }
+          },
+          animation: {
+            'fade-in': 'fadeIn 0.7s ease-out forwards',
+            'slide-up': 'slideUp 0.7s ease-out forwards',
+            'pulse-subtle': 'pulseSubtle 2.5s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+             // Retain starTwinkle from original if any static stars are desired beyond the new CSS
+            'star-twinkle': 'starTwinkle 5s ease-in-out infinite alternate',
+            'pulse': 'pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite', // For placeholders
+          },
+          keyframes: {
+            fadeIn: { '0%': { opacity: 0 }, '100%': { opacity: 1 } },
+            slideUp: { '0%': { opacity: 0, transform: 'translateY(15px)' }, '100%': { opacity: 1, transform: 'translateY(0)' } },
+            pulseSubtle: { '0%, 100%': { transform: 'scale(1)', opacity: 1 }, '50%': { transform: 'scale(0.98)', opacity: .7 } },
+            starTwinkle: { '0%': { opacity: '0.3' }, '50%': { opacity: '1' }, '100%': { opacity: '0.3' } },
+            pulse: {
+              '0%, 100%': { opacity: 1 },
+              '50%': { opacity: .5 },
+            },
+          },
+          boxShadow: {
+             // New theme focus style
+            'form-focus': '0 0 0 3px rgba(167, 139, 250, 0.3)',
+          },
+        },
+      },
+      plugins: [
+        function({ addUtilities, theme }) {
+          const newUtilities = {
+            '.text-stroke-varied': { // Kept from old theme as it's a utility
+              '-webkit-text-stroke': `0.8px ${theme('colors.gray.200')}33`, 
+              'paint-order': 'stroke fill',
+            },
+            '.custom-scrollbar': { // Kept from old theme
+              '&::-webkit-scrollbar': { width: '5px', height: '5px' },
+              '&::-webkit-scrollbar-track': { background: '#101018' /* gem-ebony-surface approx */, borderRadius: '10px' },
+              '&::-webkit-scrollbar-thumb': { background: theme('colors.gray.500'), borderRadius: '10px' },
+              '&::-webkit-scrollbar-thumb:hover': { background: theme('colors.gray.400') },
+            },
+          }
+          addUtilities(newUtilities, ['responsive', 'hover'])
+        }
+      ]
+    }
+  </script>
+<script type="importmap">
+{
+  "imports": {
+    "react": "https://esm.sh/react@^19.1.0",
+    "react/": "https://esm.sh/react@^19.1.0/",
+    "react-dom/": "https://esm.sh/react-dom@^19.1.0/",
+    "@google/genai": "https://esm.sh/@google/genai@^1.0.0",
+    "three": "https://cdn.jsdelivr.net/npm/three@0.164.1/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.164.1/examples/jsm/"
+  }
+}
+</script>
+<style>
+  body {
+    font-family: 'Inter', sans-serif;
+    margin: 0; 
+    overflow-x: hidden;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  .starry-background {
+    background-color: #0A0A0F; /* Very dark, near-black */
+    background-image:
+      /* Subtle Nebulae */
+      radial-gradient(ellipse at 10% 20%, rgba(106, 27, 154, 0.15) 0%, transparent 40%), /* Deep Purple */
+      radial-gradient(ellipse at 85% 75%, rgba(67, 56, 202, 0.1) 0%, transparent 40%), /* Indigo */
+      radial-gradient(ellipse at 50% 50%, rgba(219, 39, 119, 0.05) 0%, transparent 50%), /* Faint Pink */
+      /* Star Layers */
+      radial-gradient(1px 1px at 15% 25%, white, transparent),
+      radial-gradient(1px 1px at 30% 60%, white, transparent),
+      radial-gradient(1.5px 1.5px at 50% 10%, white, transparent),
+      radial-gradient(1px 1px at 70% 80%, white, transparent),
+      radial-gradient(1px 1px at 90% 40%, white, transparent),
+      radial-gradient(1px 1px at 5% 85%, white, transparent),
+      radial-gradient(1.5px 1.5px at 45% 45%, white, transparent),
+      radial-gradient(1px 1px at 75% 20%, white, transparent),
+      radial-gradient(1px 1px at 60% 90%, white, transparent),
+      radial-gradient(1px 1px at 25% 5%, white, transparent),
+      radial-gradient(1px 1px at 5% 50%, white, transparent),
+      radial-gradient(1px 1px at 95% 50%, white, transparent),
+      radial-gradient(1px 1px at 50% 95%, white, transparent),
+      radial-gradient(1px 1px at 50% 5%, white, transparent),
+      radial-gradient(1px 1px at 35% 35%, white, transparent),
+      radial-gradient(1px 1px at 65% 65%, white, transparent),
+      radial-gradient(1.5px 1.5px at 80% 10%, white, transparent),
+      radial-gradient(1px 1px at 20% 75%, white, transparent);
+    background-size: cover;
+    background-attachment: fixed;
+  }
+
+  .hero-heading-placeholder-font { /* Renamed to avoid conflict if a class named hero-heading-placeholder is made */
+    font-family: 'Playfair Display', serif;
+  }
+
+  /* Style for form inputs based on new theme */
+  .form-input-themed {
+    background-color: rgba(55, 65, 81, 0.4); /* bg-gray-700/40 */
+    border: 1px solid rgba(75, 85, 99, 0.6); /* border-gray-600/60 */
+    color: #e5e7eb; /* text-gray-200 */
+    border-radius: 0.5rem; /* rounded-lg */
+    padding: 0.75rem 1rem; /* p-3 equivalent */
+    transition: border-color 0.2s ease-in-out, box-shadow 0.2s ease-in-out;
+  }
+  .form-input-themed:focus {
+    border-color: #a78bfa; /* As per new theme's focus-within style */
+    box-shadow: 0 0 0 3px rgba(167, 139, 250, 0.3); /* As per new theme */
+    outline: none;
+  }
+  .form-input-themed::placeholder {
+    color: #9ca3af; /* text-gray-400 approx */
+  }
+   /* Custom checkbox style to align with form-input-themed */
+  .form-checkbox-themed {
+    height: 1.25rem; 
+    width: 1.25rem; 
+    appearance: none;
+    background-color: rgba(55, 65, 81, 0.4); /* bg-gray-700/40 */
+    border: 1px solid rgba(75, 85, 99, 0.6); /* border-gray-600/60 */
+    border-radius: 0.25rem; /* rounded-md */
+    transition: all 0.2s ease-in-out;
+    cursor: pointer;
+    display: inline-block;
+    vertical-align: middle;
+  }
+  .form-checkbox-themed:checked {
+    background-image: url("data:image/svg+xml,%3csvg viewBox='0 0 16 16' fill='white' xmlns='http://www.w3.org/2000/svg'%3e%3cpath d='M12.207 4.793a1 1 0 010 1.414l-5 5a1 1 0 01-1.414 0l-2-2a1 1 0 011.414-1.414L6.5 9.086l4.293-4.293a1 1 0 011.414 0z'/%3e%3c/svg%3e");
+    background-color: #a78bfa; /* Focus color as check color */
+    border-color: transparent;
+  }
+  .form-checkbox-themed:focus {
+    border-color: #a78bfa;
+    box-shadow: 0 0 0 3px rgba(167, 139, 250, 0.3);
+    outline: none;
+  }
+  /* Custom select arrow color */
+  .select-arrow-themed {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%23e5e7eb'%3E%3Cpath fill-rule='evenodd' clip-rule='evenodd' d='M19.5 8.25l-7.5 7.5-7.5-7.5' /%3E%3C/svg%3E"); /* gray-200 */
+    background-size: 1.2em 1.2em;
+    background-position: right 0.75rem center;
+    background-repeat: no-repeat;
+    appearance: none;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+  }
+
+  html {
+    scrollbar-width: thin;
+    scrollbar-color: #6b7280 #101018; /* thumb track (gray-500, dark surface) */
+  }
+  .text-stroke-varied { 
+    font-weight: 800; 
+    letter-spacing: 0.025em;
+    text-shadow: 0 0 8px rgba(229, 231, 235, 0.15); /* gray-200 glow */
+  }
+  ::selection {
+    background-color: #a78bfa; /* New theme purple focus */
+    color: #0A0A0F; /* Dark text on selection */
+  }
+  #threejs-gem-canvas {
+    width: 100%;
+    height: 100%;
+    min-height: 300px; 
+    display: block; 
+    outline: none; 
+  }
+</style>
+</head>
+<body class="starry-background text-gray-200 min-h-screen flex flex-col overflow-hidden">
+  <div id="root"></div>
+  <script type="module" src="/frontend/src/index.tsx"></script>
+</body>
+</html>
+<link rel="stylesheet" href="index.css">
+<script src="index.tsx" type="module"></script>

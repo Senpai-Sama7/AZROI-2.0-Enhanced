@@ -1,0 +1,58 @@
+{
+  "default_llm_model_backend": "gemini-2.5-flash-preview-04-17",
+  "log_level": "INFO",
+  "max_concurrent_agents": 1,
+  "planner_agent_prompt_template": "You are an AI Architect's master planning agent. Your task is to receive a high-level user goal and any initial AI analysis, then decompose it into a clear, actionable, and ordered list of tasks required to achieve that goal. \n\nFocus on these primary task types: \n1. `code_generation`: For creating application code. Specify language, framework, key files, and detailed functionality. Example input: {{'language':'Python', 'framework':'FastAPI', 'details':'Create a /hello endpoint returning 'world'. Main file should be main.py.'}}. Expected output: {{'generated_code_path':'local_path_to_code_dir', 'entrypoint_file':'main.py', 'dependencies_file':'requirements.txt'}}.\n2. `dockerfile_generation`: For creating a Dockerfile for the generated code. Input should be the path to the generated code and details about the app (entrypoint, language). Expected output: {{'dockerfile_path':'local_path_to_dockerfile'}}.\n3. `gcs_upload`: For uploading a folder (containing code and Dockerfile) to Google Cloud Storage. Input: {{'local_folder_path':'path_to_folder', 'gcs_prefix':'target_gcs_prefix'}}. Expected output: {{'gcs_source_uri':'gs://bucket/prefix_folder_name.tar.gz'}}.\n4. `artifact_registry_repo_create`: To ensure a Docker repository exists in GCP Artifact Registry. Input: {{'repository_name':'repo_name'}}. Expected output: {{'repository_path':'full_ar_repo_path'}}.\n5. `cloud_build_trigger`: For building a Docker image from source in GCS and pushing to Artifact Registry. Input: {{'gcs_source_uri':'gs_uri_of_tar_gz_source', 'image_name_artifact_registry':'full_ar_image_path_with_tag', 'dockerfile_path_in_gcs_source':'path/to/Dockerfile_in_tar_gz'}}. Expected output: {{'built_image_uri':'full_ar_image_uri_with_digest', 'cloud_build_log_url':'url_to_build_logs'}}.\n6. `cloud_run_deploy`: For deploying an image from Artifact Registry to Cloud Run. Input: {{'service_name_hint':'app_name_hint', 'image_uri_artifact_registry':'full_ar_image_uri'}}. Expected output: {{'cloud_run_service_url':'deployed_service_url'}}.\n\nFor each task, provide: \n- `task_id` (e.g., 'task_001') \n- `type` (from list above) \n- `description` (clear instruction for the next agent) \n- `dependencies` (list of `task_id`s this task depends on, empty if none) \n- `inputs` (a dictionary of parameters needed for the task, using placeholders like '{{outputs.task_XYZ.output_name}}' to refer to outputs of previous dependent tasks) \n- `outputs_schema` (a dictionary describing the expected named outputs from this task, e.g., {{'generated_code_path':'description_of_path'}}) \n\nBe precise and structured. The output MUST be a valid JSON list of these task objects. \nUser Goal: {user_goal}. \nInitial Client-Side Analysis (if any): {user_analysis}",
+  "code_execution_timeout_seconds": 600,
+  "output_base_path_code_executions": "./backend/outputs/code_executions",
+  "default_generated_app_port": 8080,
+  "cloud_build_timeout_seconds": "1800s",
+  "open_interpreter_config": {
+    "model_string_fallback": "gpt-4-turbo", 
+    "azure_api_key_env_var": "AZURE_OPENAI_API_KEY",
+    "azure_api_base_env_var": "AZURE_OPENAI_API_BASE",
+    "azure_api_version_env_var": "AZURE_OPENAI_API_VERSION",
+    "azure_deployment_id_env_var": "AZURE_OPENAI_DEPLOYMENT_ID",
+    "openai_api_key_env_var": "OPENAI_API_KEY",
+    "auto_run": true,
+    "safe_mode": "auto", 
+    "system_message": "You are an expert software developer operating in a secure, isolated environment. Your task is to generate the requested application code and any associated files (like requirements.txt or package.json). You MUST save all generated files directly into your current working directory. After generation, please confirm by listing the names of the main application entrypoint file and any dependency management files you created (e.g., 'Created main.py and requirements.txt'). Do not ask for confirmation before creating files. Execute commands directly if needed for setup (e.g. pip install).",
+    "max_retries": 2
+  },
+  "gcp_config_defaults": {
+    "project_id": "ai-agent-system-458618",
+    "region": "us-central1",
+    "gcs_bucket_name": "azroi_bucket",
+    "artifact_registry_repository": "ai-architect-apps", 
+    "artifact_registry_region_fallback": "us-central1",
+    "cloud_run_service_prefix": "ai-arch-svc",
+    "cloud_run_allow_unauthenticated": true
+  },
+  "vector_storage_config": {
+    "path": "./backend/vectorstore_data",
+    "collection_name": "ai_architect_memory",
+    "url": null,
+    "vector_size": 1536
+  },
+  "redis_config": {
+    "url": "redis://localhost:6379",
+    "ttl": 3600
+  },
+  "monitoring_config": {
+    "prometheus_port": 8002,
+    "collect_hardware_metrics": true,
+    "metrics_interval": 15
+  },
+  "sandbox_config": {
+    "use_gvisor": false,
+    "isolation_level": "high",
+    "max_memory_mb": 2048,
+    "cpu_limit": 1.0,
+    "network_enabled": false
+  },
+  "agent_orchestration": {
+    "crew_process": "sequential",
+    "max_agent_iterations": 10,
+    "allow_delegation": true
+  }
+}
