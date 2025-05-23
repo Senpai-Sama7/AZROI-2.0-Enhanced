@@ -1,429 +1,377 @@
 #!/usr/bin/env python3
-# filepath: /home/donovan/Downloads/autonomous-ai-architect-ui (3)/backend/main.py
+"""
+Main FastAPI application for the Autonomous AI Architect backend.
+Provides REST API endpoints and WebSocket connections for real-time updates.
+"""
 
 import asyncio
 import json
 import logging
 import os
-import secrets
-import threading
-import time
 import uuid
-from typing import Dict, List, Optional, Any
-from pathlib import Path
-from dotenv import load_dotenv
+from datetime import datetime
+from typing import Dict, List, Optional
 
 import uvicorn
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, BackgroundTasks, Depends
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, ValidationError
 
 # Import core components
-from core_orchestration.config_loader import ConfigLoader
-from core_orchestration.agent_orchestrator import AgentOrchestrator
-from core_orchestration.llm_router import LLMRouter
-from core_orchestration.monitoring_system import MonitoringSystem, register_monitoring_metrics
-from core_orchestration.safety_sandbox import SafetySandbox
-from core_orchestration.hardware_audit import HardwareAuditSystem
+from backend.core_orchestration.config_loader import ConfigLoader
+from backend.core_orchestration.agent_orchestrator import AgentOrchestrator
+from backend.core_orchestration.llm_router import LLMRouter
+from backend.core_orchestration.monitoring_system import MonitoringSystem
 
-# Import agents (will be used with CrewAI)
-from agents.architect_agent import ArchitectAgent
-from agents.planner_agent import PlannerAgent
-from agents.code_execution_agent import CodeExecutionAgent
-from agents.cloud_agent import CloudAgent
-
-# Import vector storage and memory
-from tools.vector_storage import VectorStorage
-from tools.memory_manager import MemoryManager  # Keep compatibility with existing memory manager
-
-# Import new AZR and FFL components
-from azr.core import AbsoluteZeroReasoner
-from ffl.core import FractalFeedbackLoop
-
-# Load environment variables
-load_dotenv()
-
-# Set up credential paths
-ROOT_DIR = Path(__file__).parent.parent
-CREDENTIALS_DIR = ROOT_DIR / "credentials"
-GCP_CREDENTIALS_PATH = CREDENTIALS_DIR / "architect-super-sa-key.json"
-AZURE_CREDENTIALS_PATH = CREDENTIALS_DIR / "azure_deployment.json"
-
-# Set Google Application Credentials environment variable
-os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = str(GCP_CREDENTIALS_PATH)
-
-# Load Azure credentials
-azure_credentials = {}
-if AZURE_CREDENTIALS_PATH.exists():
-    with open(AZURE_CREDENTIALS_PATH, "r") as f:
-        azure_credentials = json.load(f)
-
-# Initialize logging
+# Configure logging
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
+logger = logging.getLogger(__name__)
 
-logger = logging.getLogger("ai-architect-backend")
+# Pydantic models for API
+class ArchitectGoalRequest(BaseModel):
+    text: str = Field(..., min_length=10, max_length=5000, description="The goal description")
+    
+class ArchitectGoal(BaseModel):
+    id: str
+    text: str
+    status: str = "pending"
+    analysis: Optional[str] = None
+    submitTime: str
+    completionTime: Optional[str] = None
+    processingError: Optional[str] = None
 
-# Initialize configuration
-config_loader = ConfigLoader()
-config = config_loader.load_config()  # This will load from config.json and override with .env values
+class ConfigUpdateRequest(BaseModel):
+    """Request model for configuration updates"""
+    default_llm_model_backend: Optional[str] = None
+    log_level: Optional[str] = None
+    max_concurrent_agents: Optional[int] = Field(None, ge=1, le=10)
+    planner_agent_prompt_template: Optional[str] = None
+    code_execution_timeout_seconds: Optional[int] = Field(None, ge=1, le=3600)
+    default_generated_app_port: Optional[int] = Field(None, ge=1000, le=65535)
+    cloud_build_timeout_seconds: Optional[str] = None
+    
+    # Nested configurations
+    open_interpreter_config: Optional[Dict] = None
+    gcp_config_defaults: Optional[Dict] = None
+    chroma_db_config: Optional[Dict] = None
 
-# Set log level from config
-log_level = getattr(logging, config.get("log_level", "INFO"))
-logger.setLevel(log_level)
+# Global state management
+class AppState:
+    def __init__(self):
+        self.goals: Dict[str, ArchitectGoal] = {}
+        self.agents: Dict[str, Dict] = {}
+        self.outputs: List[Dict] = []
+        self.websocket_connections: List[WebSocket] = []
+        self.config_loader: ConfigLoader = ConfigLoader()
+        self.orchestrator: Optional[AgentOrchestrator] = None
+        self.llm_router: Optional[LLMRouter] = None
+        self.monitoring: MonitoringSystem = MonitoringSystem()
 
-# Create FastAPI app
+app_state = AppState()
+
+# Initialize FastAPI app
 app = FastAPI(
     title="Autonomous AI Architect API",
     description="Backend API for the Autonomous AI Architect system",
     version="1.0.0",
+    docs_url="/api/docs",
+    redoc_url="/api/redoc"
 )
 
-# Add CORS middleware for development
+# Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, replace with specific origins
+    allow_origins=["http://localhost:3000", "http://localhost:8501"],  # React and Streamlit
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Shared resources
-active_connections: Dict[str, WebSocket] = {}
-active_tasks: Dict[str, Dict[str, Any]] = {}  # Track active tasks and their states
-task_locks: Dict[str, asyncio.Lock] = {}  # Locks for task state updates to prevent race conditions
-
-# Initialize monitoring system
-monitoring_system = MonitoringSystem()
-register_monitoring_metrics()  # Set up initial prometheus metrics
-
-# Hardware audit system
-hardware_audit_system = HardwareAuditSystem()  # For monitoring and auditing system resources
-
-# Initialize vector storage with GCP bucket if available
-bucket_name = os.getenv("GOOGLE_BUCKET", "").replace("gs://", "").replace("/", "")
-vector_storage = VectorStorage(
-    collection_name=config.get("vector_storage_config", {}).get("collection_name", "ai_architect_memory"),
-    url=config.get("vector_storage_config", {}).get("url", None),
-    path=config.get("vector_storage_config", {}).get("path", "./backend/vectorstore_data"),
-    gcp_bucket_name=bucket_name if bucket_name else None,
-    gcp_project_id=os.getenv("GOOGLE_PROJECT_ID", None),
-)
-
-# Initialize memory manager (compatibility layer over vector storage)
-memory_manager = MemoryManager(
-    vector_storage=vector_storage,
-    collection_name=config.get("vector_storage_config", {}).get("collection_name", "ai_architect_memory"),
-)
-
-# Configure LLM router with Azure OpenAI if credentials exist
-azure_config = {
-    "azure_api_key": os.getenv("AZURE_OPENAI_API_KEY") or azure_credentials.get("azure_api_key", ""),
-    "azure_api_base": os.getenv("AZURE_OPENAI_API_BASE") or azure_credentials.get("azure_api_base", ""),
-    "azure_api_version": os.getenv("AZURE_OPENAI_API_VERSION") or azure_credentials.get("azure_api_version", ""),
-    "azure_deployment_id": os.getenv("AZURE_OPENAI_DEPLOYMENT_ID") or azure_credentials.get("azure_deployment_id", ""),
-}
-
-# Initialize LLM router with caching and Azure OpenAI support
-llm_router = LLMRouter(
-    redis_url=config.get("redis_config", {}).get("url", "redis://localhost:6379"),
-    default_model=config.get("default_llm_model_backend", "gemini-2.5-flash-preview-04-17"),
-    azure_config=azure_config if all(azure_config.values()) else None,
-)
-
-# Initialize safety sandbox
-safety_sandbox = SafetySandbox(
-    use_gvisor=config.get("sandbox_config", {}).get("use_gvisor", False),
-    isolation_level=config.get("sandbox_config", {}).get("isolation_level", "high"),
-)
-
-# Initialize Absolute Zero Reasoner (AZR)
-azr = AbsoluteZeroReasoner(llm_router=llm_router)
-
-# Initialize Fractal Feedback Loop (FFL)
-ffl = FractalFeedbackLoop(
-    llm_router=llm_router,
-    monitoring_system=monitoring_system,
-    feedback_interval=config.get("ffl_config", {}).get("feedback_interval", 3600),
-    initial_feedback_delay=config.get("ffl_config", {}).get("initial_feedback_delay", 86400),
-    min_samples_required=config.get("ffl_config", {}).get("min_samples_required", 10),
-    config=config.get("ffl_config", {})
-)
-
-# Initialize agent orchestrator with CrewAI and integrate AZR
-agent_orchestrator = AgentOrchestrator(
-    llm_router=llm_router, 
-    memory_manager=memory_manager,
-    safety_sandbox=safety_sandbox,
-    monitoring_system=monitoring_system,
-    azr=azr,  # Add AZR for zero-shot planning
-    ffl=ffl,   # Add FFL for system improvement
-    config=config
-)
-
-# --- API Models ---
-class GoalRequest(BaseModel):
-    goal: str
-    client_analysis: Optional[str] = None
-    user_id: Optional[str] = None  # To associate goals with specific users
-
-class GoalResponse(BaseModel):
-    goal_id: str
-    status: str
-    message: str
-    websocket_url: str
-
-# --- API Routes ---
-@app.get("/")
-async def root():
-    return {"status": "alive", "service": "Autonomous AI Architect Backend"}
-
-@app.get("/health")
-async def health_check():
-    """Health check endpoint with system metrics."""
-    system_metrics = hardware_audit_system.get_basic_metrics()
-    system_metrics["status"] = "healthy"
-    return system_metrics
-
-@app.get("/status/{goal_id}")
-async def get_goal_status(goal_id: str):
-    """Get the status and information about a specific goal."""
-    if goal_id not in active_tasks:
-        # Try to retrieve from memory
-        memory_result = memory_manager.get_by_id(goal_id)
-        if memory_result:
-            return memory_result
-        else:
-            raise HTTPException(status_code=404, detail=f"Goal ID {goal_id} not found")
-    
-    # If active, return current status
-    return active_tasks[goal_id]
-
-@app.post("/goals", response_model=GoalResponse)
-async def submit_goal(goal_request: GoalRequest, background_tasks: BackgroundTasks):
-    """Submit a new goal to the Autonomous AI Architect system."""
-    # Generate a unique goal ID
-    goal_id = str(uuid.uuid4())
-    
-    # Create a lock for this task to prevent race conditions
-    task_locks[goal_id] = asyncio.Lock()
-    
-    # Initialize task state
-    active_tasks[goal_id] = {
-        "goal_id": goal_id,
-        "goal": goal_request.goal,
-        "client_analysis": goal_request.client_analysis,
-        "user_id": goal_request.user_id or "anonymous",
-        "status": "submitted",
-        "created_at": time.time(),
-        "updated_at": time.time(),
-        "plan": None,
-        "artifacts": [],
-        "logs": [],
-    }
-    
-    # Start the orchestration process in the background
-    background_tasks.add_task(
-        agent_orchestrator.start_orchestration,
-        goal_id=goal_id,
-        goal=goal_request.goal,
-        client_analysis=goal_request.client_analysis,
-    )
-    
-    # Return response with websocket URL for real-time updates
-    host = os.environ.get("HOST", "localhost")
-    port = os.environ.get("PORT", "8001")
-    websocket_url = f"ws://{host}:{port}/ws/{goal_id}"
-    
-    return GoalResponse(
-        goal_id=goal_id,
-        status="submitted",
-        message="Goal submitted successfully. Connect to the websocket for real-time updates.",
-        websocket_url=websocket_url,
-    )
-
-@app.websocket("/ws/{goal_id}")
-async def websocket_endpoint(websocket: WebSocket, goal_id: str):
-    """WebSocket connection for real-time updates on goal progress."""
-    await websocket.accept()
-    
-    # Store the connection
-    active_connections[goal_id] = websocket
-    
-    try:
-        # Send initial data if there's any
-        if goal_id in active_tasks:
-            await websocket.send_json({"type": "state_update", "data": active_tasks[goal_id]})
-        
-        # Keep the connection open to receive messages from client (if needed)
-        while True:
-            data = await websocket.receive_text()
-            # Handle incoming messages if needed
-            message_data = json.loads(data)
-            
-            # Example: Client requests specific information
-            if message_data.get("type") == "request_logs":
-                if goal_id in active_tasks:
-                    await websocket.send_json({
-                        "type": "logs",
-                        "data": {"logs": active_tasks[goal_id].get("logs", [])}
-                    })
-    
-    except WebSocketDisconnect:
-        # Clean up when client disconnects
-        if goal_id in active_connections:
-            del active_connections[goal_id]
-    
-    except Exception as e:
-        logger.error(f"WebSocket error for {goal_id}: {str(e)}")
-        if goal_id in active_connections:
-            del active_connections[goal_id]
-
-# Add new endpoint for AZR planning
-@app.post("/planning")
-async def create_plan(goal_request: GoalRequest):
-    """Create a plan using Absolute Zero Reasoner without execution."""
-    try:
-        plan = await azr.decompose_task(
-            goal=goal_request.goal,
-            context=goal_request.client_analysis
-        )
-        return {
-            "status": "success",
-            "plan": plan,
-            "goal": goal_request.goal
-        }
-    except Exception as e:
-        logger.error(f"Error creating plan: {e}")
-        raise HTTPException(status_code=500, detail=f"Error creating plan: {str(e)}")
-
-# Add endpoint to view FFL analytics
-@app.get("/ffl/analytics")
-async def get_ffl_analytics():
-    """Get FFL analytics including performance metrics and improvement history."""
-    return {
-        "performance_metrics": ffl.performance_metrics,
-        "improvement_history": ffl.improvement_history,
-        "last_feedback_time": ffl.last_feedback_time,
-        "next_feedback_time": ffl.last_feedback_time + ffl.feedback_interval
-    }
-
-# Utility function to send updates to connected WebSocket clients
-async def send_update(goal_id: str, data: dict, update_type: str = "state_update"):
-    """Send an update to a connected client via WebSocket."""
-    if goal_id in active_connections:
-        websocket = active_connections[goal_id]
-        try:
-            await websocket.send_json({"type": update_type, "data": data})
-        except Exception as e:
-            logger.error(f"Error sending WebSocket update: {str(e)}")
-
-# Update task state (with locking to prevent race conditions)
-async def update_task_state(goal_id: str, updates: dict):
-    """Update the state of a task with proper locking to prevent race conditions."""
-    if goal_id not in task_locks:
-        task_locks[goal_id] = asyncio.Lock()
-        
-    async with task_locks[goal_id]:
-        if goal_id in active_tasks:
-            active_tasks[goal_id].update(updates)
-            active_tasks[goal_id]["updated_at"] = time.time()
-            
-            # Also update in vector memory
-            memory_manager.store(active_tasks[goal_id])
-            
-            # Send update to connected client
-            await send_update(goal_id, active_tasks[goal_id])
-            
-            # If task is complete, update metrics
-            if updates.get("status") == "completed":
-                monitoring_system.record_task_completed(goal_id)
-                
-                # Cleanup locks after completion
-                if goal_id in task_locks:
-                    del task_locks[goal_id]
-
-# --- Cleanup job ---
-async def cleanup_old_tasks():
-    """Periodic job to clean up old tasks from memory to prevent leaks."""
-    while True:
-        current_time = time.time()
-        
-        # Keep locks here to prevent race conditions
-        goals_to_remove = []
-        
-        for goal_id, task in active_tasks.items():
-            # If task is over 24 hours old and not active, mark for removal
-            if current_time - task.get("updated_at", 0) > 86400 and task.get("status") not in ["running", "submitted"]:
-                goals_to_remove.append(goal_id)
-        
-        # Remove old tasks
-        for goal_id in goals_to_remove:
-            if goal_id in active_tasks:
-                # Make sure it's saved to memory first
-                memory_manager.store(active_tasks[goal_id])
-                
-                # Then delete from active state
-                del active_tasks[goal_id]
-                
-                # Clean up any locks
-                if goal_id in task_locks:
-                    del task_locks[goal_id]
-                    
-                logger.info(f"Cleaned up old task {goal_id}")
-        
-        # Run once per hour
-        await asyncio.sleep(3600)
-
-# --- Main function ---
+# Startup event
 @app.on_event("startup")
 async def startup_event():
-    """Startup event handler to initialize system components."""
-    # Start the cleanup task
-    asyncio.create_task(cleanup_old_tasks())
-    
-    # Update system metrics on startup
-    system_info = hardware_audit_system.get_full_system_info()
-    logger.info(f"System initialized with: {json.dumps(system_info, indent=2)}")
-    
-    # Start monitoring system
-    monitoring_system.start()
-    
-    # Initialize vector storage
-    await vector_storage.initialize()
-    
-    # Initialize safety sandbox - ensure safety features are active
-    await safety_sandbox.initialize()
-    
-    # Start Fractal Feedback Loop
-    await ffl.start()
-    
-    # Expose Prometheus metrics
-    from prometheus_client import start_http_server
-    start_http_server(int(os.environ.get("METRICS_PORT", "8002")))
+    """Initialize services on startup"""
+    try:
+        logger.info("Starting Autonomous AI Architect backend...")
+        
+        # Load configuration
+        await app_state.config_loader.load_config()
+        
+        # Initialize LLM router
+        llm_config = await app_state.config_loader.get_config()
+        app_state.llm_router = LLMRouter(
+            providers=llm_config.get('llm_providers', None),
+            default_provider=llm_config.get('default_llm_provider', 'mock')
+        )
+        
+        # Initialize agent orchestrator
+        app_state.orchestrator = AgentOrchestrator(
+            config_loader=app_state.config_loader,
+            llm_router=app_state.llm_router
+        )
+        
+        # Start monitoring
+        await app_state.monitoring.start()
+        
+        logger.info("Backend startup completed successfully")
+    except Exception as e:
+        logger.error(f"Startup failed: {e}")
+        raise
 
-@app.on_event("shutdown")
-async def shutdown_event():
-    """Shutdown event handler to clean up resources."""
-    # Cleanup any resources
-    await llm_router.close()
-    monitoring_system.stop()
-    await ffl.stop()
+# Health check endpoint
+@app.get("/api/health")
+async def health_check():
+    """Health check endpoint"""
+    try:
+        system_status = await app_state.monitoring.get_system_status()
+        return {
+            "status": "healthy",
+            "timestamp": datetime.utcnow().isoformat(),
+            "services": {
+                "config_loader": "healthy" if app_state.config_loader else "unhealthy",
+                "orchestrator": "healthy" if app_state.orchestrator else "unhealthy",
+                "llm_router": "healthy" if app_state.llm_router else "unhealthy",
+            },
+            "system": system_status
+        }
+    except Exception as e:
+        logger.error(f"Health check failed: {e}")
+        return JSONResponse(
+            status_code=503,
+            content={"status": "unhealthy", "error": str(e)}
+        )
 
-# Expose agent orchestrator and update function to other modules
-app.state.agent_orchestrator = agent_orchestrator
-app.state.update_task_state = update_task_state
-app.state.send_update = send_update
+# Configuration endpoints
+@app.get("/api/config")
+async def get_config():
+    """Get current configuration"""
+    try:
+        config = await app_state.config_loader.get_config()
+        return config
+    except Exception as e:
+        logger.error(f"Failed to get config: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/config")
+async def update_config(config_update: ConfigUpdateRequest):
+    """Update configuration"""
+    try:
+        # Validate and apply configuration changes
+        updated_config = await app_state.config_loader.update_config(config_update.dict(exclude_unset=True))
+        
+        # Restart services if necessary
+        if app_state.orchestrator:
+            await app_state.orchestrator.reload_config()
+        
+        return {
+            "message": "Configuration updated successfully",
+            "updated_config": updated_config
+        }
+    except ValidationError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except Exception as e:
+        logger.error(f"Failed to update config: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Goal management endpoints
+@app.post("/api/goals")
+async def submit_goal(goal_request: ArchitectGoalRequest, background_tasks: BackgroundTasks):
+    """Submit a new goal for processing"""
+    try:
+        goal_id = str(uuid.uuid4())
+        goal = ArchitectGoal(
+            id=goal_id,
+            text=goal_request.text,
+            submitTime=datetime.utcnow().isoformat()
+        )
+        
+        app_state.goals[goal_id] = goal
+        
+        # Start processing in background
+        background_tasks.add_task(process_goal, goal_id)
+        
+        # Notify WebSocket clients
+        await broadcast_goal_update(goal)
+        
+        return {"goal_id": goal_id, "status": "submitted"}
+    except Exception as e:
+        logger.error(f"Failed to submit goal: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/goals/{goal_id}")
+async def get_goal(goal_id: str):
+    """Get goal by ID"""
+    if goal_id not in app_state.goals:
+        raise HTTPException(status_code=404, detail="Goal not found")
+    return app_state.goals[goal_id]
+
+@app.get("/api/goals")
+async def list_goals():
+    """List all goals"""
+    return list(app_state.goals.values())
+
+# Outputs endpoint
+@app.get("/api/outputs")
+async def get_outputs(goal_id: Optional[str] = None):
+    """Get outputs, optionally filtered by goal ID"""
+    if goal_id:
+        filtered_outputs = [output for output in app_state.outputs if output.get("goalId") == goal_id]
+        return filtered_outputs
+    return app_state.outputs
+
+# WebSocket endpoint
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    """WebSocket endpoint for real-time updates"""
+    await websocket.accept()
+    app_state.websocket_connections.append(websocket)
+    
+    try:
+        # Send initial state
+        await websocket.send_json({
+            "event": "initial_state",
+            "data": {
+                "goals": list(app_state.goals.values()),
+                "agents": list(app_state.agents.values()),
+                "outputs": app_state.outputs[-50:]  # Last 50 outputs
+            }
+        })
+        
+        # Keep connection alive and handle messages
+        while True:
+            try:
+                data = await websocket.receive_json()
+                # Handle incoming WebSocket messages if needed
+                logger.debug(f"Received WebSocket message: {data}")
+            except:
+                break
+                
+    except WebSocketDisconnect:
+        pass
+    finally:
+        if websocket in app_state.websocket_connections:
+            app_state.websocket_connections.remove(websocket)
+
+# Background task functions
+async def process_goal(goal_id: str):
+    """Process a goal using the agent orchestrator"""
+    try:
+        goal = app_state.goals[goal_id]
+        goal.status = "analyzing"
+        await broadcast_goal_update(goal)
+        
+        # Use orchestrator to process the goal
+        if app_state.orchestrator:
+            async for update in app_state.orchestrator.process_goal(goal.text, goal_id):
+                if update["type"] == "goal_status":
+                    goal.status = update["status"]
+                    if update.get("error"):
+                        goal.processingError = update["error"]
+                    if update["status"] == "completed":
+                        goal.completionTime = datetime.utcnow().isoformat()
+                    await broadcast_goal_update(goal)
+                
+                elif update["type"] == "agent_update":
+                    app_state.agents[update["agent"]["id"]] = update["agent"]
+                    await broadcast_agent_update(update["agent"])
+                
+                elif update["type"] == "output":
+                    output = {
+                        "id": str(uuid.uuid4()),
+                        "goalId": goal_id,
+                        "timestamp": datetime.utcnow().isoformat(),
+                        **update["data"]
+                    }
+                    app_state.outputs.append(output)
+                    await broadcast_output_update(output)
+        else:
+            # Fallback if orchestrator is not available
+            goal.status = "completed"
+            goal.completionTime = datetime.utcnow().isoformat()
+            await broadcast_goal_update(goal)
+        
+    except Exception as e:
+        logger.error(f"Goal processing failed for {goal_id}: {e}")
+        goal = app_state.goals[goal_id]
+        goal.status = "error"
+        goal.processingError = str(e)
+        await broadcast_goal_update(goal)
+
+# WebSocket broadcast functions
+async def broadcast_goal_update(goal: ArchitectGoal):
+    """Broadcast goal update to all connected WebSocket clients"""
+    message = {
+        "event": "goal_update",
+        "data": {
+            "goal_id": goal.id,
+            "goal": goal.dict(),
+            "timestamp": datetime.utcnow().isoformat()
+        }
+    }
+    await broadcast_to_websockets(message)
+
+async def broadcast_agent_update(agent: Dict):
+    """Broadcast agent update to all connected WebSocket clients"""
+    message = {
+        "event": "agent_update",
+        "data": {
+            "agent": agent,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+    }
+    await broadcast_to_websockets(message)
+
+async def broadcast_output_update(output: Dict):
+    """Broadcast output update to all connected WebSocket clients"""
+    message = {
+        "event": "output_update",
+        "data": {
+            "output": output,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+    }
+    await broadcast_to_websockets(message)
+
+async def broadcast_to_websockets(message: Dict):
+    """Broadcast message to all connected WebSocket clients"""
+    if not app_state.websocket_connections:
+        return
+    
+    disconnected = []
+    for websocket in app_state.websocket_connections:
+        try:
+            await websocket.send_json(message)
+        except:
+            disconnected.append(websocket)
+    
+    # Remove disconnected clients
+    for websocket in disconnected:
+        app_state.websocket_connections.remove(websocket)
+
+# Error handlers
+@app.exception_handler(ValidationError)
+async def validation_exception_handler(request, exc):
+    return JSONResponse(
+        status_code=422,
+        content={"detail": "Validation error", "errors": exc.errors()}
+    )
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request, exc):
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.detail}
+    )
 
 if __name__ == "__main__":
     uvicorn.run(
-        "main:app", 
-        host="0.0.0.0", 
-        port=int(os.environ.get("PORT", 8001)),
-        reload=True  # Only for development
+        "main:app",
+        host="0.0.0.0",
+        port=8001,
+        reload=True,
+        log_level="info"
     )

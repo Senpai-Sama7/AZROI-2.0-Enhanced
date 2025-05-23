@@ -1,54 +1,45 @@
 import React from 'react';
 
-interface CardProps extends React.HTMLAttributes<HTMLDivElement> {
+interface CardProps {
   title?: string;
+  titleIcon?: React.ReactNode;
   children: React.ReactNode;
   className?: string;
-  titleClassName?: string;
   bodyClassName?: string;
-  footer?: React.ReactNode;
-  titleIcon?: React.ReactNode;
-  // accentColor and other complex styling props like kaleidoscope, iridescent-border are removed for the new theme
+  headerClassName?: string;
+  onClick?: () => void;
+  hoverable?: boolean;
 }
 
-const Card: React.FC<CardProps> = ({ 
-    title, 
-    children, 
-    className = '', 
-    titleClassName = '', 
-    bodyClassName = '', 
-    footer, 
-    titleIcon, 
-    ...rest 
+const Card: React.FC<CardProps> = ({
+  title,
+  titleIcon,
+  children,
+  className = '',
+  bodyClassName = '',
+  headerClassName = '',
+  onClick,
+  hoverable = false
 }) => {
-  // New theme card styling: glassy background effect with blur
-  const cardBaseClasses = "bg-gray-900/60 backdrop-blur-md rounded-lg overflow-hidden shadow-xl border border-gray-800/50";
-  
-  // Standard icon size for card titles - use a sensible default like w-5 h-5 or text-lg if it's a font icon
-  // If titleIcon is an <Icon> component, it should ideally take its own size prop or inherit.
-  // For now, let's assume Icon component handles its own default size or respects text size.
-  const iconWrapperClass = "text-gray-300 mr-2"; // For the span wrapping the icon
+  const baseClasses = 'bg-gray-800/60 backdrop-blur-sm border border-gray-700/60 rounded-lg shadow-lg';
+  const hoverClasses = hoverable ? 'hover:border-gray-600/70 hover:shadow-xl transition-all duration-200' : '';
+  const clickableClasses = onClick ? 'cursor-pointer' : '';
 
   return (
     <div 
-      className={`${cardBaseClasses} animate-fade-in transition-all duration-300 ${className}`}
-      {...rest}
+      className={`${baseClasses} ${hoverClasses} ${clickableClasses} ${className}`}
+      onClick={onClick}
     >
-      <div className="relative z-10"> {/* Content wrapper */}
-        {title && (
-          <div className={`px-4 py-3 border-b border-gray-700/60 flex items-center ${titleClassName}`}>
-            {titleIcon && <span className={iconWrapperClass}>{titleIcon}</span>}
-            <h3 className="text-base font-semibold text-gray-100">{title}</h3> {/* text-base or text-md */}
-          </div>
-        )}
-        <div className={`p-4 ${bodyClassName}`}> {/* Standardized padding */}
-          {children}
+      {title && (
+        <div className={`px-4 py-3 border-b border-gray-700/50 ${headerClassName}`}>
+          <h3 className="text-lg font-semibold text-white flex items-center">
+            {titleIcon && <span className="mr-2">{titleIcon}</span>}
+            {title}
+          </h3>
         </div>
-        {footer && (
-          <div className="px-4 py-3 bg-black/20 border-t border-gray-700/60"> {/* Slightly darker footer bg */}
-            {footer}
-          </div>
-        )}
+      )}
+      <div className={`p-4 ${bodyClassName}`}>
+        {children}
       </div>
     </div>
   );

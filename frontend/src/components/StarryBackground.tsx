@@ -1,58 +1,108 @@
-import React, { useEffect, useState, useMemo } from 'react';
-import './styles/starry-background.css';
+import React, { useEffect, useRef } from 'react';
 
-// Modern version of the space background that uses the starry background CSS class
+interface Star {
+  x: number;
+  y: number;
+  size: number;
+  speed: number;
+  opacity: number;
+  twinkle: number;
+}
+
 const StarryBackground: React.FC = () => {
-  const [shootingStarKey, setShootingStarKey] = useState(0); // For re-triggering shooting star animation
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const starsRef = useRef<Star[]>([]);
+  const animationRef = useRef<number>();
 
   useEffect(() => {
-    // Show a new shooting star every 8-20 seconds
-    const interval = setInterval(() => {
-      setShootingStarKey((prevKey: number) => prevKey + 1);
-    }, Math.random() * 12000 + 8000);
-    
-    return () => clearInterval(interval);
-  }, []);
-  
-  const ShootingStar = useMemo(() => {
-    const topStart = `${Math.random() * 50}%`;
-    const leftStart = `${Math.random() * 100}%`;
-    const angle = Math.random() * 45 + 15; // 15-60 degrees
-    const duration = `${Math.random() * 1.5 + 1}s`;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
 
-    return (
-      <div
-        key={shootingStarKey}
-        className="absolute w-16 h-px bg-gradient-to-r from-white to-transparent opacity-0 animate-shooting-star-fall"
-        style={{
-          top: topStart,
-          left: leftStart,
-          '--shooting-star-duration': duration,
-          '--shooting-star-delay': `${Math.random() * 0.5}s`,
-          '--shooting-star-angle': `${angle}deg`,
-        } as React.CSSProperties}
-      />
-    );
-  }, [shootingStarKey]);
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    // Set canvas size
+    const resizeCanvas = () => {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+    };
+
+    resizeCanvas();
+    window.addEventListener('resize', resizeCanvas);
+
+    // Initialize stars
+    const initStars = () => {
+      const starCount = Math.floor((canvas.width * canvas.height) / 8000); // Density based on screen size
+      starsRef.current = [];
+
+      for (let i = 0; i < starCount; i++) {
+        starsRef.current.push({
+          x: Math.random() * canvas.width,
+          y: Math.random() * canvas.height,
+          size: Math.random() * 2 + 0.5,
+          speed: Math.random() * 0.5 + 0.1,
+          opacity: Math.random() * 0.8 + 0.2,
+          twinkle: Math.random() * Math.PI * 2
+        });
+      }
+    };
+
+    initStars();
+
+    // Animation loop
+    const animate = () => {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      // Update and draw stars
+      starsRef.current.forEach((star) => {
+        // Update twinkle
+        star.twinkle += 0.02;
+        
+        // Update position (slow drift)
+        star.y += star.speed;
+        if (star.y > canvas.height) {
+          star.y = -5;
+          star.x = Math.random() * canvas.width;
+        }
+
+        // Calculate twinkling opacity
+        const twinkleOpacity = star.opacity * (0.5 + 0.5 * Math.sin(star.twinkle));
+
+        // Draw star
+        ctx.beginPath();
+        ctx.arc(star.x, star.y, star.size, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(255, 255, 255, ${twinkleOpacity})`;
+        ctx.fill();
+
+        // Add subtle glow for larger stars
+        if (star.size > 1.5) {
+          ctx.beginPath();
+          ctx.arc(star.x, star.y, star.size * 2, 0, Math.PI * 2);
+          ctx.fillStyle = `rgba(255, 255, 255, ${twinkleOpacity * 0.1})`;
+          ctx.fill();
+        }
+      });
+
+      animationRef.current = requestAnimationFrame(animate);
+    };
+
+    animate();
+
+    return () => {
+      window.removeEventListener('resize', resizeCanvas);
+      if (animationRef.current) {
+        cancelAnimationFrame(animationRef.current);
+      }
+    };
+  }, []);
 
   return (
-    <div className="fixed inset-0 -z-50 overflow-hidden starry-background" aria-hidden="true">
-      {/* The starry background with stars and nebulae is defined in the CSS class */}
-      
-      {/* Additional animated elements */}
-      <div 
-        className="absolute inset-0 opacity-10 animate-subtle-drift" 
-        style={{
-          backgroundImage: `
-            radial-gradient(ellipse at 20% 30%, rgba(219, 39, 119, 0.15) 0%, transparent 70%), /* Pink */
-            radial-gradient(ellipse at 70% 65%, rgba(167, 139, 250, 0.12) 0%, transparent 70%) /* Purple */
-          `,
-          filter: 'blur(60px)',
-        }}
-      />
-      
-      {ShootingStar}
-    </div>
+    <canvas
+      ref={canvasRef}
+      className="fixed inset-0 pointer-events-none"
+      style={{ zIndex: -1 }}
+      aria-hidden="true"
+    />
   );
 };
 

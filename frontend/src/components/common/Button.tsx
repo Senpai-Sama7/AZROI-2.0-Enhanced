@@ -1,70 +1,67 @@
 import React from 'react';
-import Icon from './Icon'; // Assuming Icon component is in the same directory or path is correct
-import { ICON_ARROW_PATH } from '../../constants'; 
 
-interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
-  variant?: 'primary' | 'secondary' | 'danger' | 'ghost' | 'outline' | 'subtle';
-  size?: 'sm' | 'md' | 'lg';
-  leftIcon?: React.ReactNode;
-  rightIcon?: React.ReactNode;
-  isLoading?: boolean;
-  // Glow and iridescent props are removed as they are tied to the old theme
-  className?: string; // Allow additional classes to be passed
+interface ButtonProps {
+  children: React.ReactNode;
+  onClick?: (e: React.MouseEvent<HTMLButtonElement>) => void;
+  type?: 'button' | 'submit' | 'reset';
+  className?: string;
+  disabled?: boolean;
+  title?: string;
+  size?: 'xs' | 'sm' | 'md' | 'lg';
+  variant?: 'primary' | 'secondary' | 'outline' | 'danger' | 'success';
+  fullWidth?: boolean;
+  icon?: React.ReactNode;
+  iconPosition?: 'left' | 'right';
+  'aria-label'?: string;
 }
 
 const Button: React.FC<ButtonProps> = ({
   children,
-  variant = 'primary',
-  size = 'md',
-  leftIcon,
-  rightIcon,
-  isLoading = false,
+  onClick,
+  type = 'button',
   className = '',
+  disabled = false,
+  title,
+  size = 'md',
+  variant = 'primary',
+  fullWidth = false,
+  icon,
+  iconPosition = 'left',
+  'aria-label': ariaLabel,
   ...props
 }) => {
-  const baseStyles = "font-semibold rounded-md focus:outline-none inline-flex items-center justify-center transition-all duration-200 ease-in-out transform active:scale-[0.98] focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-800/50";
-  
-  // New theme styles using Tailwind colors
-  const variantStyles = {
-    primary: `bg-pink-600 text-white hover:bg-pink-700 shadow-md focus:ring-pink-500`,
-    secondary: `bg-gray-300 text-gray-800 hover:bg-gray-400 shadow focus:ring-gray-500`, // Light gray for secondary
-    danger: "bg-red-600 text-white hover:bg-red-700 shadow-md focus:ring-red-500",
-    ghost: "bg-transparent text-gray-300 hover:text-pink-400 hover:bg-gray-700/40 focus:ring-pink-500", // Ghost for dark backgrounds
-    outline: `bg-transparent text-pink-500 border-2 border-pink-500 hover:bg-pink-500 hover:text-white focus:ring-pink-500`,
-    subtle: "bg-gray-700/50 text-gray-300 hover:text-white hover:bg-gray-600/60 focus:ring-gray-500", // Subtle dark button
+  const sizeClasses = {
+    xs: 'px-2 py-1 text-xs',
+    sm: 'px-3 py-1.5 text-sm',
+    md: 'px-4 py-2 text-sm',
+    lg: 'px-5 py-2.5 text-base'
   };
 
-  // Modernized sizes
-  const sizeStyles = {
-    sm: "px-3 py-1.5 text-xs", // Adjusted for more common small button size
-    md: "px-4 py-2 text-sm",
-    lg: "px-5 py-2.5 text-base", // Slightly smaller lg
+  const variantClasses = {
+    primary: 'bg-pink-600 hover:bg-pink-700 text-white shadow-sm',
+    secondary: 'bg-gray-700 hover:bg-gray-600 text-white shadow-sm',
+    outline: 'bg-transparent border border-gray-600 hover:bg-gray-700 text-gray-300 hover:text-white',
+    danger: 'bg-red-600 hover:bg-red-700 text-white shadow-sm',
+    success: 'bg-green-600 hover:bg-green-700 text-white shadow-sm'
   };
 
-  const disabledStyles = "disabled:opacity-60 disabled:cursor-not-allowed disabled:shadow-none disabled:scale-100 disabled:bg-gray-600/50 disabled:text-gray-400 disabled:border-transparent";
-  const loadingIconPath = ICON_ARROW_PATH; 
-
-  // Standard icon size for buttons, adjustable per button size if needed later
-  let iconSizeClass = "w-4 h-4"; 
-  if (size === 'sm') iconSizeClass = "w-3.5 h-3.5";
-  if (size === 'lg') iconSizeClass = "w-5 h-5";
-
+  const baseClasses = 'font-medium rounded focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-900 focus:ring-pink-500 transition-colors';
+  const widthClass = fullWidth ? 'w-full' : '';
+  const disabledClasses = disabled ? 'opacity-60 cursor-not-allowed' : '';
 
   return (
     <button
-      className={`${baseStyles} ${variantStyles[variant]} ${sizeStyles[size]} ${disabledStyles} ${className}`}
-      disabled={isLoading || props.disabled}
+      type={type}
+      onClick={onClick}
+      disabled={disabled}
+      title={title}
+      aria-label={ariaLabel}
+      className={`${baseClasses} ${sizeClasses[size]} ${variantClasses[variant]} ${widthClass} ${disabledClasses} ${className} inline-flex items-center justify-center`}
       {...props}
     >
-      <span className="relative z-10 flex items-center justify-center">
-        {isLoading && (
-          <Icon path={loadingIconPath} className={`animate-spin -ml-0.5 mr-2 ${iconSizeClass}`} />
-        )}
-        {/* Ensure leftIcon and rightIcon are cloned with the correct className if they are React elements */}
-        {leftIcon && !isLoading && <span className="mr-1.5 flex items-center">{React.isValidElement(leftIcon) ? React.cloneElement(leftIcon as React.ReactElement<any>, { className: iconSizeClass}) : leftIcon}</span>}
-        {children}
-        {rightIcon && !isLoading && <span className="ml-1.5 flex items-center">{React.isValidElement(rightIcon) ? React.cloneElement(rightIcon as React.ReactElement<any>, { className: iconSizeClass}) : rightIcon}</span>}
-      </span>
+      {icon && iconPosition === 'left' && <span className="mr-2">{icon}</span>}
+      {children}
+      {icon && iconPosition === 'right' && <span className="ml-2">{icon}</span>}
     </button>
   );
 };

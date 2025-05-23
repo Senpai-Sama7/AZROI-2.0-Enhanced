@@ -1,8 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import Card from './common/Card';
-import Button from './common/Button';
 import Icon from './common/Icon';
-import { ICON_COG, ICON_SAVE, ICON_CHECK_CIRCLE, ICON_EXCLAMATION_TRIANGLE, ICON_CHEVRON_DOWN } from '../constants';
+import { ICON_COG, ICON_CHEVRON_DOWN } from '../constants';
 import LoadingSpinner from './common/LoadingSpinner';
 
 // This interface reflects the structure of `backend/config.json`
@@ -46,6 +45,13 @@ interface BackendConfig {
   };
 }
 
+// Helper function for checkbox checked state
+function isChecked(value: string | number | boolean | undefined): boolean {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'number') return value === 1;
+  if (typeof value === 'string') return value === 'true' || value === '1';
+  return false;
+}
 
 const ConfigPanel: React.FC = () => {
   const [config, setConfig] = useState<Partial<BackendConfig>>({});
@@ -179,7 +185,11 @@ const ConfigPanel: React.FC = () => {
       titleIcon={<Icon path={ICON_COG} className="w-5 h-5 text-yellow-400" />}
       bodyClassName="!p-2"
     >
-      <form onSubmit={e => { e.preventDefault(); handleSave(); }} className="space-y-4">
+      <form 
+        onSubmit={e => { e.preventDefault(); handleSave(); }} 
+        className="space-y-4"
+        aria-label="Backend configuration form"
+      >
         {/* General Settings */}
         <ConfigSection title="General">
           <InputField
@@ -334,7 +344,11 @@ const ConfigPanel: React.FC = () => {
 
         {/* Feedback and Save Button */}
         {feedback && (
-          <div className={`p-2 rounded text-xs border shadow-sm ${feedback.type === 'success' ? 'bg-green-800/20 text-green-300 border-green-600/40' : 'bg-red-800/20 text-red-300 border-red-600/40'}`}>
+          <div 
+            className={`p-2 rounded text-xs border shadow-sm ${feedback.type === 'success' ? 'bg-green-800/20 text-green-300 border-green-600/40' : 'bg-red-800/20 text-red-300 border-red-600/40'}`}
+            role="alert"
+            aria-live="polite"
+          >
             {feedback.message}
           </div>
         )}
@@ -343,6 +357,7 @@ const ConfigPanel: React.FC = () => {
             type="submit"
             className="px-4 py-1.5 rounded bg-pink-600 hover:bg-pink-700 text-white font-semibold text-xs shadow disabled:opacity-60 disabled:cursor-not-allowed"
             disabled={isSaving}
+            aria-busy={isSaving}
           >
             {isSaving ? 'Saving...' : 'Save Configuration'}
           </button>
@@ -362,7 +377,15 @@ interface InputFieldProps extends FieldPropsBase {
 
 const InputField: React.FC<InputFieldProps> = function InputField(props: InputFieldProps) {
   const { id, name, label, value, onChange, type = "text", section, disabled, options, min, max, rows, placeholder } = props;
-  const commonProps = { id, name, value: value ?? '', onChange: (e: React.ChangeEvent<any>) => onChange(e, section), disabled, className: `w-full form-input-themed text-xs ${disabled ? 'cursor-not-allowed opacity-70' : ''}` };
+  const commonProps = { 
+    id, 
+    name, 
+    value: value ?? '', 
+    onChange: (e: React.ChangeEvent<any>) => onChange(e, section), 
+    disabled, 
+    className: `w-full form-input-themed text-xs ${disabled ? 'cursor-not-allowed opacity-70' : ''}`,
+    'aria-label': label, // Add aria-label for better accessibility
+  };
   const labelBaseClass = "block text-xs font-medium text-gray-300 mb-0.5";
 
   return (
@@ -370,12 +393,15 @@ const InputField: React.FC<InputFieldProps> = function InputField(props: InputFi
       React.createElement('label', { htmlFor: id, className: labelBaseClass }, label),
       type === "select" ? (
         React.createElement('select', { ...commonProps, className: `${commonProps.className} select-arrow-themed pr-7` },
-          options?.map(opt => typeof opt === 'string' ? React.createElement('option', { key: opt, value: opt, className: "bg-gray-700 text-gray-200" }, opt) : React.createElement('option', { key: opt.value, value: opt.value, className: "bg-gray-700 text-gray-200" }, opt.label))
+          options?.map(opt => typeof opt === 'string' ? 
+            React.createElement('option', { key: opt, value: opt, className: "bg-gray-700 text-gray-200" }, opt) : 
+            React.createElement('option', { key: opt.value, value: opt.value, className: "bg-gray-700 text-gray-200" }, opt.label)
+          )
         )
       ) : type === "textarea" ? (
         React.createElement('textarea', { ...commonProps, rows, placeholder, className: `${commonProps.className} h-auto resize-y custom-scrollbar` })
       ) : type === "checkbox" ? (
-        React.createElement('input', { ...commonProps, type: 'checkbox', checked: value === true || value === 'true' ? true : false })
+        React.createElement('input', { ...commonProps, type: 'checkbox', checked: isChecked(value) })
       ) : (
         React.createElement('input', { ...commonProps, type, min, max, placeholder })
       )
@@ -385,9 +411,17 @@ const InputField: React.FC<InputFieldProps> = function InputField(props: InputFi
 
 interface ReadOnlyFieldProps { label: string; value?: string | number | boolean; }
 const ReadOnlyField: React.FC<ReadOnlyFieldProps> = function ReadOnlyField({ label, value }: ReadOnlyFieldProps) {
+  const id = `readonly-${label.toLowerCase().replace(/[^a-z0-9]/g, '-')}`;
   return React.createElement('div', null,
-    React.createElement('label', { className: "block text-xs font-medium text-gray-400 mb-0.5" }, label),
-    React.createElement('input', { type: 'text', value: value === undefined || value === null ? 'Not set/from env' : String(value), className: "w-full form-input-themed text-xs !bg-gray-800/30 !border-gray-700/40 !text-gray-400 cursor-not-allowed", disabled: true })
+    React.createElement('label', { htmlFor: id, className: "block text-xs font-medium text-gray-400 mb-0.5" }, label),
+    React.createElement('input', { 
+      id, 
+      type: 'text', 
+      value: value === undefined || value === null ? 'Not set/from env' : String(value), 
+      className: "w-full form-input-themed text-xs !bg-gray-800/30 !border-gray-700/40 !text-gray-400 cursor-not-allowed", 
+      disabled: true,
+      'aria-label': `${label} (readonly)` 
+    })
   );
 };
 

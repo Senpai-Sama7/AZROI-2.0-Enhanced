@@ -1,20 +1,19 @@
-// SVG Icon Paths (Heroicons) - These are simplified placeholders.
-// For production, use full, optimized SVG paths or an icon library.
-export const ICON_LIGHT_BULB = 'M12 18a6 6 0 006-6c0-3.314-2.686-6-6-6s-6 2.686-6 6a6 6 0 006 6zM12 2a10 10 0 100 20 10 10 0 000-20z';
-export const ICON_COG = 'M10.325 4.317a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065zM15 12a3 3 0 11-6 0 3 3 0 016 0z';
-export const ICON_CHART_BAR = 'M3 12m0-1a1 1 0 00-1 1v6a1 1 0 001 1h0a1 1 0 001-1v-6a1 1 0 00-1-1zm7 0m0-1a1 1 0 00-1 1v6a1 1 0 001 1h0a1 1 0 001-1v-6a1 1 0 00-1-1zm7 0m0-1a1 1 0 00-1 1v6a1 1 0 001 1h0a1 1 0 001-1v-6a1 1 0 00-1-1zM3 4h18M4 4a2 2 0 012-2h10a2 2 0 012 2v1H4V4z';
-export const ICON_TERMINAL = 'M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z';
-export const ICON_DOCUMENT_TEXT = 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z';
-export const ICON_CHEVRON_DOWN = 'M19.5 8.25l-7.5 7.5-7.5-7.5';
-export const ICON_ARROW_PATH = 'M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99'; // Loading spinner icon
-export const ICON_INFORMATION_CIRCLE = 'M11.25 11.25l.041-.02a.75.75 0 011.063.852l-.708 2.836a.75.75 0 001.063.853l.041-.021M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9-3.75h.008v.008H12V8.25z';
-export const ICON_EXCLAMATION_TRIANGLE = 'M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z';
-export const ICON_QUESTION_MARK_CIRCLE = 'M9.879 7.519c1.171-1.025 3.071-1.025 4.242 0 1.172 1.025 1.172 2.687 0 3.712-.203.179-.43.326-.67.442-.745.361-1.45.999-1.45 1.827v.75M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9 5.25h.008v.008H12v-.008z';
-export const ICON_KEY = 'M15.75 5.25a3 3 0 013 3m3 0a6 6 0 01-7.029 5.971l-8.415 8.415-2.828-2.828L10.97 11.971A5.971 5.971 0 0118.75 8.25zM18.75 8.25a2.25 2.25 0 11-4.5 0 2.25 2.25 0 014.5 0z';
-export const ICON_SAVE = 'M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z'; // CheckmarkCircleIcon / Save
-export const ICON_TRASH = 'M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.226 2.077H8.064a2.25 2.25 0 01-2.226-2.077L4.47 5.79m10.27.001a48.283 48.283 0 00-10.27 0C3.74 5.877 3 6.614 3 7.438v.044c0 .824.74 1.56 1.47.658l.096-.087a47.452 47.452 0 0110.048 0l.096.087c.73.658 1.47-.087 1.47-.658v-.044c0-.824-.74-1.56-1.47-.658z';
-export const ICON_CHECK_CIRCLE = 'M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z';
-
+// Core icon paths used throughout the application
+export const ICON_TERMINAL = "M6 9a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V11a2 2 0 00-2-2h-2a2 2 0 01-2-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v2a2 2 0 012 2z";
+export const ICON_DOCUMENT_TEXT = "M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z";
+export const ICON_CHEVRON_DOWN = "M19 9l-7 7-7-7";
+export const ICON_COG = "M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z";
+export const ICON_LIGHT_BULB = "M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z";
+export const ICON_EXCLAMATION_TRIANGLE = "M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z";
+export const ICON_SAVE = "M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4";
+export const ICON_CHECK_CIRCLE = "M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z";
+export const ICON_LINK_EXTERNAL = "M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14";
+export const ICON_CODE = "M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4";
+export const ICON_X = "M6 18L18 6M6 6l12 12";
+export const ICON_QUESTION_MARK_CIRCLE = "M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z";
+export const ICON_KEY = "M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z";
+export const ICON_SWITCH_HORIZONTAL = "M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4";
+export const ICON_INFORMATION_CIRCLE = "M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z";
 
 export const MOCK_HW_REPORT = { // This data is for the MonitoringPanel and remains as is.
   local_capabilities: {
@@ -49,6 +48,7 @@ export const MOCK_HW_REPORT = { // This data is for the MonitoringPanel and rema
   }
 };
 
-export const GEMINI_MODEL_NAME = 'gemini-2.5-flash-preview-04-17'; // Updated for client-side analysis & key validation
+export const GEMINI_MODEL_NAME = 'gemini-2.5-flash-preview-04-17'; // Updated for client-side analysis & key validatione analysis & key validation
 export const LOCAL_STORAGE_API_KEY = 'autonomousAIApiKey'; // For client-side Gemini API Key
-export const LOCAL_STORAGE_CONFIG_KEY = 'autonomousAIConfig'; // For ConfigPanel if it ever needs local storage (currently API-driven)
+export const LOCAL_STORAGE_CONFIG_KEY = 'autonomousAIConfig'; // For ConfigPanel if it ever needs local storage (currently API-driven)export const LOCAL_STORAGE_CONFIG_KEY = 'autonomousAIConfig'; // For ConfigPanel if it ever needs local storage (currently API-driven)
+

@@ -1,0 +1,70 @@
+[tool.poetry]
+name = "autonomous-ai-architect"
+version = "0.2.0"
+description = "A system where AI agents generate and deploy complex software architectures based on high-level goals"
+authors = ["Your Name <your.email@example.com>"]
+readme = "README.md"
+license = "MIT"
+repository = "https://github.com/Senpai_Sama7/AI-Architect"
+
+[tool.poetry.dependencies]
+python = ">=3.9,<3.12"
+fastapi = "^0.104.0"
+uvicorn = {extras = ["standard"], version = "^0.23.0"}
+python-dotenv = "^1.0.0"
+google-generativeai = "^0.3.2"
+websockets = "^12.0.0"
+langchain-core = "^0.1.8"
+langchain-google-genai = "^0.0.5"
+open-interpreter = "^0.2.0"
+docker = "^6.1.3"
+google-cloud-storage = "^2.12.0"
+google-cloud-build = "^3.20.0"
+google-cloud-run = "^0.10.0"
+google-cloud-artifact-registry = "^1.9.0"
+google-cloud-iam = "^2.13.0"
+crewai = "^0.26.0"
+langchain = "^0.1.0"
+qdrant-client = "^1.6.0"
+redis = "^5.0.0"
+prometheus-client = "^0.17.0"
+psutil = "^5.9.0"
+requests = "^2.31.0"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^7.4.0"
+pytest-asyncio = "^0.23.0"
+watchfiles = "^0.21.0"
+black = "^23.10.0"
+isort = "^5.12.0"
+mypy = "^1.6.1"
+pylint = "^3.0.2"
+coverage = "^7.3.2"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.black]
+line-length = 100
+target-version = ["py39"]
+
+[tool.isort]
+profile = "black"
+line_length = 100
+
+[tool.mypy]
+python_version = "3.9"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+
+[tool.pylint]
+max-line-length = 100
+disable = ["C0111", "C0103", "C0330", "C0326"]
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+addopts = "-ra -v"
+testpaths = ["backend/tests"]

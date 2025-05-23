@@ -1,201 +1,251 @@
 #!/usr/bin/env python3
-# filepath: /home/donovan/Downloads/autonomous-ai-architect-ui (3)/backend/core_orchestration/config_loader.py
+"""
+Enhanced Config Loader with comprehensive configuration management
+"""
 
+import logging
 import json
 import os
-import logging
+import asyncio
 from typing import Dict, Any, Optional
-from dotenv import load_dotenv
+from pathlib import Path
 
-logger = logging.getLogger("ai-architect-backend.config")
+logger = logging.getLogger(__name__)
 
 class ConfigLoader:
-    """
-    Configuration loader that combines JSON config and environment variables.
-    Environment variables take precedence over JSON config.
-    """
+    """Enhanced configuration loader with validation and dynamic updates"""
     
-    def __init__(self, config_path: str = None):
-        """
-        Initialize the config loader.
+    def __init__(self, config_file: str = "config.json"):
+        self.config_file = Path(config_file)
+        self._config: Dict[str, Any] = {}
+        self._default_config = self._get_default_config()
         
-        Args:
-            config_path: Path to the config.json file. If None, uses default path.
-        """
-        self.config_path = config_path or os.path.join(
-            os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 
-            "config.json"
-        )
-        
-        # Load environment variables from .env file
-        load_dotenv()
-        
-        self.base_config = {}
-        self.env_config = {}
-        
-    def load_config(self) -> Dict[str, Any]:
-        """
-        Load configuration from config.json and override with environment variables.
-        
-        Returns:
-            Dict containing the merged configuration.
-        """
-        # Load base config from JSON
-        try:
-            with open(self.config_path, "r") as f:
-                self.base_config = json.load(f)
-            logger.info(f"Loaded base configuration from {self.config_path}")
-        except Exception as e:
-            logger.warning(f"Failed to load config from {self.config_path}: {str(e)}")
-            self.base_config = {}
+        logger.info(f"ConfigLoader initialized with config file: {config_file}")
+    
+    def _get_default_config(self) -> Dict[str, Any]:
+        """Get default configuration"""
+        return {
+            "default_llm_model_backend": "mock",
+            "default_llm_provider": "mock",
+            "log_level": "INFO",
+            "max_concurrent_agents": 5,
+            "planner_agent_prompt_template": "Create an optimal execution plan for: {goal}",
+            "code_execution_timeout_seconds": 300,
+            "default_generated_app_port": 8501,
+            "cloud_build_timeout_seconds": 1800,
             
-        # Get environment variables that match config keys
-        self._load_env_config()
-        
-        # Merge configs, with env taking precedence
-        merged_config = self._merge_configs()
-        
-        # Add additional vector storage config
-        if "chroma_db_config" in merged_config:
-            # Transition from ChromaDB to Qdrant for vector storage
-            merged_config["vector_storage_config"] = {
-                "collection_name": merged_config["chroma_db_config"].get("collection_name", "ai_architect_memory"),
-                "path": merged_config["chroma_db_config"].get("path", "./backend/vectorstore_data"),
-                "url": os.environ.get("QDRANT_URL", None),  # Can be set via env for remote Qdrant
+            # LLM Provider configurations
+            "llm_providers": {
+                "mock": {
+                    "type": "mock",
+                    "priority": 1,
+                    "weight": 1.0,
+                    "max_requests_per_minute": 1000,
+                    "config": {}
+                },
+                "local": {
+                    "type": "local",
+                    "priority": 2,
+                    "weight": 0.8,
+                    "max_requests_per_minute": 100,
+                    "config": {
+                        "endpoint": "http://localhost:11434",
+                        "model": "llama2"
+                    }
+                }
+            },
+            
+            # Agent configurations
+            "agents": {
+                "max_retry_attempts": 3,
+                "default_timeout": 30,
+                "health_check_interval": 60
+            },
+            
+            # Open Interpreter configuration
+            "open_interpreter_config": {
+                "auto_run": False,
+                "safe_mode": True,
+                "local": True,
+                "model": "gpt-4",
+                "temperature": 0.1,
+                "max_tokens": 2000
+            },
+            
+            # GCP configuration defaults
+            "gcp_config_defaults": {
+                "project_id": "",
+                "region": "us-central1",
+                "zone": "us-central1-a",
+                "machine_type": "e2-medium",
+                "disk_size_gb": 20
+            },
+            
+            # ChromaDB configuration
+            "chroma_db_config": {
+                "host": "localhost",
+                "port": 8000,
+                "collection_name": "architect_memory",
+                "persist_directory": "./chroma_db"
+            },
+            
+            # Monitoring configuration
+            "monitoring": {
+                "enable_metrics": True,
+                "metrics_port": 9090,
+                "health_check_interval": 30,
+                "log_retention_days": 7
+            },
+            
+            # Security configuration
+            "security": {
+                "enable_auth": False,
+                "api_key_required": False,
+                "cors_origins": ["http://localhost:3000", "http://localhost:8501"],
+                "rate_limiting": {
+                    "enabled": True,
+                    "requests_per_minute": 100
+                }
             }
-        
-        # Add Redis config
-        merged_config["redis_config"] = {
-            "url": os.environ.get("REDIS_URL", "redis://localhost:6379"),
-            "ttl": int(os.environ.get("REDIS_CACHE_TTL", "3600")),  # Default 1 hour TTL
         }
-        
-        # Add monitoring config
-        merged_config["monitoring_config"] = {
-            "prometheus_port": int(os.environ.get("METRICS_PORT", "8002")),
-            "collect_hardware_metrics": os.environ.get("COLLECT_HARDWARE_METRICS", "true").lower() == "true",
-            "metrics_interval": int(os.environ.get("METRICS_INTERVAL", "15")),  # seconds
-        }
-        
-        # Add sandbox config
-        merged_config["sandbox_config"] = {
-            "use_gvisor": os.environ.get("USE_GVISOR_SANDBOX", "false").lower() == "true",
-            "isolation_level": os.environ.get("SANDBOX_ISOLATION_LEVEL", "high"),
-            "max_memory_mb": int(os.environ.get("SANDBOX_MAX_MEMORY_MB", "2048")),
-            "cpu_limit": float(os.environ.get("SANDBOX_CPU_LIMIT", "1.0")),
-            "network_enabled": os.environ.get("SANDBOX_NETWORK_ENABLED", "false").lower() == "true",
-        }
-        
-        return merged_config
     
-    def _load_env_config(self):
-        """
-        Load configuration from environment variables.
-        Maps environment variables to config keys.
-        """
-        env_mapping = {
-            # Map of environment variable name to config key path
-            "BACKEND_GEMINI_API_KEY": "gemini_api_key",
-            "DEFAULT_LLM_MODEL": "default_llm_model_backend",
-            "LOG_LEVEL": "log_level",
-            "MAX_CONCURRENT_AGENTS": "max_concurrent_agents",
-            "CODE_EXECUTION_TIMEOUT_SECONDS": "code_execution_timeout_seconds",
-            "OUTPUT_BASE_PATH_CODE_EXECUTIONS": "output_base_path_code_executions",
-            "DEFAULT_GENERATED_APP_PORT": "default_generated_app_port",
-            "CLOUD_BUILD_TIMEOUT_SECONDS": "cloud_build_timeout_seconds",
-            
-            # GCP config mapping
-            "GCP_PROJECT_ID": ["gcp_config_defaults", "project_id"],
-            "GCP_REGION": ["gcp_config_defaults", "region"],
-            "GCS_BUCKET_NAME": ["gcp_config_defaults", "gcs_bucket_name"],
-            "ARTIFACT_REGISTRY_DOCKER_REPO": ["gcp_config_defaults", "artifact_registry_repository"],
-            "ARTIFACT_REGISTRY_REGION_FALLBACK": ["gcp_config_defaults", "artifact_registry_region_fallback"],
-            "CLOUD_RUN_SERVICE_NAME_PREFIX": ["gcp_config_defaults", "cloud_run_service_prefix"],
-            "CLOUD_RUN_ALLOW_UNAUTHENTICATED": ["gcp_config_defaults", "cloud_run_allow_unauthenticated"],
-            
-            # Open Interpreter config
-            "OPEN_INTERPRETER_MODEL_STRING": ["open_interpreter_config", "model_string_fallback"],
-            "AZURE_OPENAI_API_KEY": ["open_interpreter_config", "azure_api_key"],
-            "AZURE_OPENAI_API_BASE": ["open_interpreter_config", "azure_api_base"],
-            "AZURE_OPENAI_API_VERSION": ["open_interpreter_config", "azure_api_version"],
-            "AZURE_OPENAI_DEPLOYMENT_ID": ["open_interpreter_config", "azure_deployment_id"],
-            "OPENAI_API_KEY": ["open_interpreter_config", "openai_api_key"],
-            
-            # ChromaDB config (transitioning to Qdrant)
-            "CHROMA_DB_PATH": ["chroma_db_config", "path"],
-            "CHROMA_DB_COLLECTION_NAME": ["chroma_db_config", "collection_name"],
-        }
-        
-        self.env_config = {}
-        
-        for env_var, config_key in env_mapping.items():
-            if env_var in os.environ:
-                value = os.environ[env_var]
+    async def load_config(self):
+        """Load configuration from file with fallback to defaults"""
+        try:
+            if self.config_file.exists():
+                with open(self.config_file, 'r') as f:
+                    file_config = json.load(f)
                 
-                # Handle boolean values
-                if value.lower() in ["true", "false"]:
-                    value = value.lower() == "true"
-                
-                # Handle numeric values
-                try:
-                    if "." in value and value.replace(".", "", 1).isdigit():
-                        value = float(value)
-                    elif value.isdigit():
-                        value = int(value)
-                except ValueError:
-                    pass
-                
-                # Set in env_config
-                if isinstance(config_key, list):
-                    # Handle nested keys
-                    current = self.env_config
-                    for i, key in enumerate(config_key):
-                        if i == len(config_key) - 1:
-                            # Last key, set the value
-                            if key not in current:
-                                current[key] = value
-                        else:
-                            # Create nested dict if not exists
-                            if key not in current:
-                                current[key] = {}
-                            current = current[key]
-                else:
-                    # Simple key
-                    self.env_config[config_key] = value
+                # Merge with defaults
+                self._config = self._merge_configs(self._default_config, file_config)
+                logger.info(f"Configuration loaded from {self.config_file}")
+            else:
+                self._config = self._default_config.copy()
+                logger.info("Using default configuration")
+            
+            # Validate configuration
+            await self._validate_config()
+            
+        except Exception as e:
+            logger.error(f"Failed to load config: {e}")
+            self._config = self._default_config.copy()
     
-    def _merge_configs(self) -> Dict[str, Any]:
-        """
-        Merge base config with environment config.
-        Environment config takes precedence.
-        
-        Returns:
-            Dict containing the merged configuration.
-        """
-        def deep_merge(base, override):
-            merged = base.copy()
+    async def get_config(self) -> Dict[str, Any]:
+        """Get current configuration"""
+        return self._config.copy()
+    
+    async def update_config(self, updates: Dict[str, Any]) -> Dict[str, Any]:
+        """Update configuration with new values"""
+        try:
+            # Apply updates
+            updated_config = self._merge_configs(self._config, updates)
             
-            for key, value in override.items():
-                if key in merged and isinstance(merged[key], dict) and isinstance(value, dict):
-                    # Recursively merge dictionaries
-                    merged[key] = deep_merge(merged[key], value)
-                else:
-                    # Override with value from override
-                    merged[key] = value
-                    
-            return merged
-        
-        return deep_merge(self.base_config, self.env_config)
-        
-    def get_value(self, key: str, default: Optional[Any] = None) -> Any:
-        """
-        Get a specific config value.
-        
-        Args:
-            key: Config key to get.
-            default: Default value if key not found.
+            # Validate updated configuration
+            old_config = self._config.copy()
+            self._config = updated_config
             
-        Returns:
-            Config value or default.
-        """
-        config = self.load_config()
-        return config.get(key, default)
+            try:
+                await self._validate_config()
+            except Exception as e:
+                # Rollback on validation failure
+                self._config = old_config
+                raise ValueError(f"Configuration validation failed: {e}")
+            
+            # Save to file
+            await self._save_config()
+            
+            logger.info("Configuration updated successfully")
+            return self._config.copy()
+            
+        except Exception as e:
+            logger.error(f"Failed to update config: {e}")
+            raise
+    
+    async def _validate_config(self):
+        """Validate configuration values"""
+        # Validate log level
+        valid_log_levels = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
+        if self._config.get("log_level") not in valid_log_levels:
+            raise ValueError(f"Invalid log_level. Must be one of: {valid_log_levels}")
+        
+        # Validate numeric ranges
+        if not (1 <= self._config.get("max_concurrent_agents", 5) <= 10):
+            raise ValueError("max_concurrent_agents must be between 1 and 10")
+        
+        if not (1 <= self._config.get("code_execution_timeout_seconds", 300) <= 3600):
+            raise ValueError("code_execution_timeout_seconds must be between 1 and 3600")
+        
+        if not (1000 <= self._config.get("default_generated_app_port", 8501) <= 65535):
+            raise ValueError("default_generated_app_port must be between 1000 and 65535")
+        
+        # Validate LLM providers
+        if not isinstance(self._config.get("llm_providers"), dict):
+            raise ValueError("llm_providers must be a dictionary")
+        
+        logger.debug("Configuration validation passed")
+    
+    def _merge_configs(self, base: Dict[str, Any], updates: Dict[str, Any]) -> Dict[str, Any]:
+        """Recursively merge configuration dictionaries"""
+        result = base.copy()
+        
+        for key, value in updates.items():
+            if key in result and isinstance(result[key], dict) and isinstance(value, dict):
+                result[key] = self._merge_configs(result[key], value)
+            else:
+                result[key] = value
+        
+        return result
+    
+    async def _save_config(self):
+        """Save current configuration to file"""
+        try:
+            # Create backup of existing config
+            if self.config_file.exists():
+                backup_file = self.config_file.with_suffix('.json.backup')
+                self.config_file.replace(backup_file)
+            
+            # Write new configuration
+            with open(self.config_file, 'w') as f:
+                json.dump(self._config, f, indent=2, sort_keys=True)
+            
+            logger.debug(f"Configuration saved to {self.config_file}")
+            
+        except Exception as e:
+            logger.error(f"Failed to save config: {e}")
+            raise
+    
+    def get_llm_config(self) -> Dict[str, Any]:
+        """Get LLM-specific configuration"""
+        return {
+            "providers": self._config.get("llm_providers", {}),
+            "default_provider": self._config.get("default_llm_provider", "mock"),
+            "default_model": self._config.get("default_llm_model_backend", "mock")
+        }
+    
+    def get_agent_config(self) -> Dict[str, Any]:
+        """Get agent-specific configuration"""
+        return self._config.get("agents", {})
+    
+    def get_monitoring_config(self) -> Dict[str, Any]:
+        """Get monitoring configuration"""
+        return self._config.get("monitoring", {})
+    
+    def get_security_config(self) -> Dict[str, Any]:
+        """Get security configuration"""
+        return self._config.get("security", {})
+    
+    async def reload_config(self):
+        """Reload configuration from file"""
+        await self.load_config()
+        logger.info("Configuration reloaded")
+    
+    def get_config_summary(self) -> Dict[str, Any]:
+        """Get configuration summary for debugging"""
+        return {
+            "config_file": str(self.config_file),
+            "config_exists": self.config_file.exists(),
+            "llm_providers": list(self._config.get("llm_providers", {}).keys()),
+            "default_provider": self._config.get("default_llm_provider"),
+            "max_concurrent_agents": self._config.get("max_concurrent_agents"),
+            "log_level": self._config.get("log_level")
+        }

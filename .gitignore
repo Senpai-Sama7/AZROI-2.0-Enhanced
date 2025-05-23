@@ -55,7 +55,7 @@ env/
 
 # IDE files
 .idea/
-.vscode/
+
 *.swp
 *.swo
 !.vscode/extensions.json
@@ -83,3 +83,6 @@ Thumbs.db
 *.njsproj
 *.sln
 *.sw?
+
+.python_packages
+.venv

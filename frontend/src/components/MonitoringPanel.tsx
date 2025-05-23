@@ -1,177 +1,308 @@
 import React, { useState, useEffect } from 'react';
 import Card from './common/Card';
 import Icon from './common/Icon';
-import { ICON_CHART_BAR, ICON_COG, MOCK_HW_REPORT, ICON_LIGHT_BULB } from '../constants';
-import type { HwReport } from '../types';
-import LoadingSpinner from './common/LoadingSpinner';
+import { ICON_COG, ICON_CHECK_CIRCLE, ICON_EXCLAMATION_TRIANGLE, ICON_INFORMATION_CIRCLE } from '../constants';
+import { MOCK_HW_REPORT } from '../constants';
+import type { SystemStatus } from '../types';
 
-const MonitoringPanel: React.FC = () => {
-  const [hwReport, setHwReport] = useState<HwReport>(MOCK_HW_REPORT as HwReport);
-  const [metrics, setMetrics] = useState<any>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+interface MonitoringPanelProps {
+  systemStatus: SystemStatus | null;
+  wsConnection: WebSocket | null;
+  lastHeartbeat: Date | null;
+}
 
+const MonitoringPanel: React.FC<MonitoringPanelProps> = ({ 
+  systemStatus, 
+  wsConnection, 
+  lastHeartbeat 
+}) => {
+  const [expandedSection, setExpandedSection] = useState<string | null>(null);
+  const [connectionQuality, setConnectionQuality] = useState<'good' | 'poor' | 'disconnected'>('disconnected');
+
+  // Monitor connection quality
   useEffect(() => {
-    const fetchSystemData = async () => {
-      setIsLoading(true);
-      setError(null);
-      try {
-        // Fetch hardware report
-        const hwResponse = await fetch('http://localhost:8001/api/system/hardware');
-        if (!hwResponse.ok) {
-          throw new Error('Failed to fetch hardware data');
-        }
-        const hwData = await hwResponse.json();
-        
-        // Fetch metrics data
-        const metricsResponse = await fetch('http://localhost:8001/api/system/metrics');
-        if (!metricsResponse.ok) {
-          throw new Error('Failed to fetch metrics data');
-        }
-        const metricsData = await metricsResponse.json();
-        
-        // Update state with real data
-        setHwReport(hwData.hardware_report || MOCK_HW_REPORT);
-        setMetrics(metricsData.metrics);
-      } catch (error) {
-        console.error("Error fetching system data:", error);
-        setError("Failed to load system data. Using mock data instead.");
-        // Fallback to mock data
-        setHwReport(MOCK_HW_REPORT as HwReport);
-      } finally {
-        setIsLoading(false);
-      }
-    };
+    if (!wsConnection || wsConnection.readyState !== WebSocket.OPEN) {
+      setConnectionQuality('disconnected');
+      return;
+    }
 
-    fetchSystemData();
-    
-    // Set up a refresh interval (every 30 seconds)
-    const intervalId = setInterval(fetchSystemData, 30000);
-    
-    // Cleanup interval on component unmount
-    return () => clearInterval(intervalId);
-  }, []);
+    if (!lastHeartbeat) {
+      setConnectionQuality('poor');
+      return;
+    }
 
-  // MetricCard styled for the new theme
-  const MetricCard: React.FC<{label: string; value: string | number; unit?: string; iconPath?: string; accentClass?: string; trend?: 'up' | 'down' | 'neutral'}> = 
-  ({label, value, unit, iconPath, accentClass = 'text-blue-400', trend}) => {
-    const trendClasses = { 
-        up: 'text-green-400', 
-        down: 'text-red-400',
-        neutral: 'text-gray-400'
-    };
-    const trendIcons = { 
-        up: 'M4.5 15.75l7.5-7.5 7.5 7.5', 
-        down: 'M19.5 8.25l-7.5 7.5-7.5-7.5', 
-        neutral: 'M15 12H9m12 0a9 9 0 11-18 0 9 9 0 0118 0z' 
-    };
+    const timeSinceHeartbeat = Date.now() - lastHeartbeat.getTime();
+    if (timeSinceHeartbeat < 30000) { // 30 seconds
+      setConnectionQuality('good');
+    } else {
+      setConnectionQuality('poor');
+    }
+  }, [wsConnection, lastHeartbeat]);
 
-    return (
-        <div 
-            className="bg-gray-800/60 p-3 rounded-lg shadow border border-gray-700/60 transform hover:scale-[1.02] transition-transform duration-200 hover:shadow-md hover:border-gray-600/70"
-        >
-            <div className="flex items-center justify-between mb-0.5">
-                <p className="text-xs font-medium text-gray-400">{label}</p>
-                {iconPath && <Icon path={iconPath} className={`w-3.5 h-3.5 ${accentClass}`} />}
-            </div>
-            <p className="text-lg font-bold text-gray-100">{value}{unit && <span className="text-xs font-medium text-gray-400 ml-1">{unit}</span>}</p>
-            {trend && (
-                <div className={`mt-0.5 flex items-center text-xs ${trendClasses[trend]}`}>
-                    <Icon path={trendIcons[trend]} className="w-2.5 h-2.5 mr-0.5" />
-                    <span>{trend === 'up' ? '+5.2%' : trend === 'down' ? '-1.8%' : 'Stable'}</span>
-                </div>
-            )}
-        </div>
-    );
+  const toggleSection = (section: string) => {
+    setExpandedSection(expandedSection === section ? null : section);
   };
-  
-  const DetailItem: React.FC<{label: string; children: React.ReactNode; highlight?: boolean}> = ({label, children, highlight=false}) => (
-    <div className="py-1 border-b border-gray-700/50 last:border-b-0">
-        <span className={`font-medium text-xs ${highlight ? 'text-yellow-300' : 'text-gray-200'}`}>{label}: </span>
-        <span className="text-gray-300 text-xs">{children}</span>
-    </div>
-  );
 
-  if (isLoading) {
-    return (
-      <div className="flex justify-center items-center h-full">
-        <LoadingSpinner />
-      </div>
-    );
-  }
+  const getStatusColor = (status: string) => {
+    switch (status.toLowerCase()) {
+      case 'healthy':
+      case 'connected':
+      case 'running':
+        return 'text-green-400';
+      case 'degraded':
+      case 'poor':
+        return 'text-yellow-400';
+      case 'unhealthy':
+      case 'disconnected':
+      case 'error':
+      case 'stopped':
+        return 'text-red-400';
+      default:
+        return 'text-gray-400';
+    }
+  };
+
+  const getStatusIcon = (status: string) => {
+    switch (status.toLowerCase()) {
+      case 'healthy':
+      case 'connected':
+      case 'running':
+        return ICON_CHECK_CIRCLE;
+      case 'degraded':
+      case 'poor':
+        return ICON_EXCLAMATION_TRIANGLE;
+      case 'unhealthy':
+      case 'disconnected':
+      case 'error':
+      case 'stopped':
+        return ICON_EXCLAMATION_TRIANGLE;
+      default:
+        return ICON_INFORMATION_CIRCLE;
+    }
+  };
+
+  const formatPercentage = (value: number) => `${value.toFixed(1)}%`;
+  const formatUptime = (lastUpdated: string) => {
+    const updateTime = new Date(lastUpdated);
+    const now = new Date();
+    const diffMs = now.getTime() - updateTime.getTime();
+    const diffMinutes = Math.floor(diffMs / 60000);
+    
+    if (diffMinutes < 1) return 'Just now';
+    if (diffMinutes < 60) return `${diffMinutes}m ago`;
+    
+    const diffHours = Math.floor(diffMinutes / 60);
+    if (diffHours < 24) return `${diffHours}h ${diffMinutes % 60}m ago`;
+    
+    const diffDays = Math.floor(diffHours / 24);
+    return `${diffDays}d ${diffHours % 24}h ago`;
+  };
 
   return (
-    <div className="space-y-4 animate-slide-up">
-      {error && <p className="text-red-400 text-xs text-center">{error}</p>}
+    <div className="space-y-6 animate-slide-up">
+      {/* System Overview */}
       <Card 
-        title="System Performance Dashboard" 
-        titleIcon={<Icon path={ICON_CHART_BAR} className="w-5 h-5 text-blue-400" />}
+        title="System Status Overview" 
+        titleIcon={<Icon path={ICON_COG} className="w-5 h-5 text-blue-400" />}
       >
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
-          {metrics ? (
-            <>
-              <MetricCard label="LLM API Calls (1hr)" value={metrics.llm_api_calls} trend="up" iconPath="M10.5 6a7.5 7.5 0 100 15 7.5 7.5 0 000-15zM2.25 10.5a8.25 8.25 0 1114.59 5.28l4.69 4.69a.75.75 0 11-1.06 1.06l-4.69-4.69A8.25 8.25 0 012.25 10.5z" accentClass="text-blue-400"/>
-              <MetricCard label="Avg. LLM Latency" value={metrics.avg_llm_latency} unit="s" trend="down" iconPath="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" accentClass="text-yellow-400" />
-              <MetricCard label="Cache Hit Rate" value={metrics.cache_hit_rate} unit="%" trend="up" iconPath="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" accentClass="text-green-400" />
-              <MetricCard label="Active AI Agents" value={metrics.active_ai_agents} trend="neutral" iconPath="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z" accentClass="text-purple-400" />
-              <MetricCard label="GCP Credit Burn (Today)" value={`$${metrics.gcp_credit_burn}`} trend="down" iconPath="M2.25 18.75a60.07 60.07 0 0115.797 2.101c.727.198 1.453-.342 1.453-1.096V18.75M3.75 4.5v.75A.75.75 0 013 6A.75.75 0 012.25 5.25v-.75m0 0A2.25 2.25 0 014.5 2.25h15A2.25 2.25 0 0121.75 4.5m-18 0v.75A.75.75 0 003 6a.75.75 0 00.75-.75v-.75m0 0h15" accentClass="text-red-400"/>
-              <MetricCard label="Critical Errors (24hr)" value={metrics.critical_errors} trend="down" iconPath="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" accentClass="text-red-400"/>
-            </>
-          ) : (
-            <p className="text-xs text-center text-gray-500 p-1">
-              No metrics data available.
-            </p>
-          )}
-        </div>
+        {systemStatus ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <StatusItem
+              label="Backend Health"
+              value={systemStatus.backend_health}
+              icon={getStatusIcon(systemStatus.backend_health)}
+              colorClass={getStatusColor(systemStatus.backend_health)}
+            />
+            <StatusItem
+              label="WebSocket"
+              value={connectionQuality}
+              icon={getStatusIcon(connectionQuality)}
+              colorClass={getStatusColor(connectionQuality)}
+              subtext={lastHeartbeat ? `Last: ${lastHeartbeat.toLocaleTimeString()}` : undefined}
+            />
+            <StatusItem
+              label="Open Interpreter"
+              value={systemStatus.open_interpreter_status}
+              icon={getStatusIcon(systemStatus.open_interpreter_status)}
+              colorClass={getStatusColor(systemStatus.open_interpreter_status)}
+            />
+            <StatusItem
+              label="Memory Usage"
+              value={formatPercentage(systemStatus.memory_usage_percent)}
+              icon={ICON_INFORMATION_CIRCLE}
+              colorClass={systemStatus.memory_usage_percent > 80 ? 'text-red-400' : 'text-green-400'}
+            />
+            <StatusItem
+              label="CPU Usage"
+              value={formatPercentage(systemStatus.cpu_usage_percent)}
+              icon={ICON_INFORMATION_CIRCLE}
+              colorClass={systemStatus.cpu_usage_percent > 80 ? 'text-red-400' : 'text-green-400'}
+            />
+            <StatusItem
+              label="Active Agents"
+              value={systemStatus.agent_count.toString()}
+              icon={ICON_INFORMATION_CIRCLE}
+              colorClass="text-blue-400"
+            />
+          </div>
+        ) : (
+          <div className="text-center py-8 text-gray-400">
+            <p>Loading system status...</p>
+          </div>
+        )}
+        
+        {systemStatus && (
+          <div className="mt-4 pt-4 border-t border-gray-700 text-xs text-gray-400">
+            Last updated: {formatUptime(systemStatus.last_updated)}
+          </div>
+        )}
       </Card>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <Card 
-            title="Local Hardware Insights" 
-            titleIcon={<Icon path={ICON_COG} className="w-5 h-5 text-purple-400" />}
-        >
-          <div className="space-y-1.5 text-xs">
-            <DetailItem label="Server">{hwReport.local_capabilities.server_details}</DetailItem>
-            <DetailItem label="Laptop">{hwReport.local_capabilities.laptop_details}</DetailItem>
-            <DetailItem label="VLLM/TGI Compatible" highlight={!hwReport.local_capabilities.gpu_acceleration_vllm_tgi_compatible}>
-                <span className={hwReport.local_capabilities.gpu_acceleration_vllm_tgi_compatible ? 'text-green-400' : 'text-red-400'}>
-                    {hwReport.local_capabilities.gpu_acceleration_vllm_tgi_compatible ? 'Yes' : 'No'}
-                </span>
-            </DetailItem>
-            {!hwReport.local_capabilities.gpu_acceleration_vllm_tgi_compatible && <DetailItem label="Reason">{hwReport.local_capabilities.reason_vllm_tgi_incompatibility}</DetailItem>}
-            <DetailItem label="Max Local CPU LLM (Ollama)">{hwReport.local_capabilities.max_local_llm_cpu_inference_ollama}</DetailItem>
-            <DetailItem label="Est. Local CPU Tokens/sec (7B q4)">{hwReport.local_capabilities.estimated_local_7b_q4_tokens_sec_cpu_ollama}</DetailItem>
-            <div>
-              <h4 className="font-medium text-gray-200 mt-1.5 mb-0.5 text-xs">Key Limitations:</h4>
-              <ul className="list-disc list-inside pl-2.5 text-gray-300 space-y-0.5 text-xs">
-                {hwReport.local_capabilities.limitations.map((lim, i) => <li key={i}>{lim}</li>)}
-              </ul>
+      {/* Hardware Report */}
+      <Card 
+        title="Hardware Capabilities Report" 
+        titleIcon={<Icon path={ICON_INFORMATION_CIRCLE} className="w-5 h-5 text-purple-400" />}
+      >
+        <div className="space-y-4">
+          {/* Local Capabilities */}
+          <ExpandableSection
+            title="Local Hardware Analysis"
+            isExpanded={expandedSection === 'local'}
+            onToggle={() => toggleSection('local')}
+          >
+            <div className="space-y-3 text-sm">
+              <InfoRow label="Server" value={MOCK_HW_REPORT.local_capabilities.server_details} />
+              <InfoRow label="Laptop" value={MOCK_HW_REPORT.local_capabilities.laptop_details} />
+              <InfoRow 
+                label="GPU Acceleration" 
+                value={MOCK_HW_REPORT.local_capabilities.gpu_acceleration_vllm_tgi_compatible ? 'Available' : 'Not Available'}
+                colorClass={MOCK_HW_REPORT.local_capabilities.gpu_acceleration_vllm_tgi_compatible ? 'text-green-400' : 'text-red-400'}
+              />
+              <InfoRow label="Reason" value={MOCK_HW_REPORT.local_capabilities.reason_vllm_tgi_incompatibility} />
+              <InfoRow label="Max Local LLM" value={MOCK_HW_REPORT.local_capabilities.max_local_llm_cpu_inference_ollama} />
+              <InfoRow label="Estimated Performance" value={MOCK_HW_REPORT.local_capabilities.estimated_local_7b_q4_tokens_sec_cpu_ollama} />
+              
+              <div className="mt-3">
+                <h5 className="font-semibold text-gray-300 mb-2">Limitations:</h5>
+                <ul className="space-y-1 text-xs text-gray-400">
+                  {MOCK_HW_REPORT.local_capabilities.limitations.map((limitation, index) => (
+                    <li key={index} className="flex items-start">
+                      <span className="text-red-400 mr-2">•</span>
+                      <span>{limitation}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
             </div>
-          </div>
-        </Card>
+          </ExpandableSection>
 
-        <Card 
-            title="Cloud Strategy & Resource Plan" 
-            titleIcon={<Icon path={ICON_LIGHT_BULB} className="w-5 h-5 text-yellow-400" />}
-        >
-          <div className="space-y-1.5 text-xs">
-            <DetailItem label="Primary LLM Hosting" highlight>{hwReport.cloud_requirements_and_strategy.primary_llm_hosting_optimized}</DetailItem>
-            <DetailItem label="Embedding (Primary)">{hwReport.cloud_requirements_and_strategy.embedding_model_preference.primary.provider} - {hwReport.cloud_requirements_and_strategy.embedding_model_preference.primary.model} ({hwReport.cloud_requirements_and_strategy.embedding_model_preference.primary.cost_notes})</DetailItem>
-            {hwReport.cloud_requirements_and_strategy.embedding_model_preference.alternative && <DetailItem label="Embedding (Alt)">{hwReport.cloud_requirements_and_strategy.embedding_model_preference.alternative.provider} - {hwReport.cloud_requirements_and_strategy.embedding_model_preference.alternative.model} ({hwReport.cloud_requirements_and_strategy.embedding_model_preference.alternative.cost_notes})</DetailItem>}
-            <DetailItem label="Vertex GPU (Balanced)">{hwReport.cloud_requirements_and_strategy.vertex_ai_gpu_config_balanced}</DetailItem>
-            <DetailItem label="Vertex GPU (Powerful)">{hwReport.cloud_requirements_and_strategy.vertex_ai_gpu_config_powerful}</DetailItem>
-            <DetailItem label="Est. T4 VM Cost (Vertex)">{hwReport.cloud_requirements_and_strategy.estimated_cost_t4_vm_vertex}</DetailItem>
-            <div>
-              <h4 className="font-medium text-gray-200 mt-1.5 mb-0.5 text-xs">Credit Optimization Focus:</h4>
-              <ul className="list-disc list-inside pl-2.5 text-gray-300 space-y-0.5 text-xs">
-                {(hwReport.cloud_requirements_and_strategy.credit_optimization_strategies || []).map((strat, i) => <li key={i}>{strat}</li>)}
-              </ul>
+          {/* Cloud Strategy */}
+          <ExpandableSection
+            title="Cloud Optimization Strategy"
+            isExpanded={expandedSection === 'cloud'}
+            onToggle={() => toggleSection('cloud')}
+          >
+            <div className="space-y-3 text-sm">
+              <InfoRow 
+                label="Primary LLM Hosting" 
+                value={MOCK_HW_REPORT.cloud_requirements_and_strategy.primary_llm_hosting_optimized} 
+              />
+              
+              <div className="bg-gray-800/30 p-3 rounded border border-gray-700">
+                <h5 className="font-semibold text-gray-300 mb-2">Embedding Models:</h5>
+                <div className="space-y-2 text-xs">
+                  <div>
+                    <span className="text-green-400 font-medium">Primary:</span> {MOCK_HW_REPORT.cloud_requirements_and_strategy.embedding_model_preference.primary.provider} - {MOCK_HW_REPORT.cloud_requirements_and_strategy.embedding_model_preference.primary.model}
+                    <div className="text-gray-400 ml-4">{MOCK_HW_REPORT.cloud_requirements_and_strategy.embedding_model_preference.primary.cost_notes}</div>
+                  </div>
+                  <div>
+                    <span className="text-blue-400 font-medium">Alternative:</span> {MOCK_HW_REPORT.cloud_requirements_and_strategy.embedding_model_preference.alternative.provider} - {MOCK_HW_REPORT.cloud_requirements_and_strategy.embedding_model_preference.alternative.model}
+                    <div className="text-gray-400 ml-4">{MOCK_HW_REPORT.cloud_requirements_and_strategy.embedding_model_preference.alternative.cost_notes}</div>
+                  </div>
+                </div>
+              </div>
+
+              <InfoRow label="Balanced GPU Config" value={MOCK_HW_REPORT.cloud_requirements_and_strategy.vertex_ai_gpu_config_balanced} />
+              <InfoRow label="High-Performance Config" value={MOCK_HW_REPORT.cloud_requirements_and_strategy.vertex_ai_gpu_config_powerful} />
+              <InfoRow label="Estimated T4 Cost" value={MOCK_HW_REPORT.cloud_requirements_and_strategy.estimated_cost_t4_vm_vertex} />
+
+              <div className="mt-3">
+                <h5 className="font-semibold text-gray-300 mb-2">Cost Optimization Strategies:</h5>
+                <ul className="space-y-1 text-xs text-gray-400">
+                  {MOCK_HW_REPORT.cloud_requirements_and_strategy.credit_optimization_strategies.map((strategy, index) => (
+                    <li key={index} className="flex items-start">
+                      <span className="text-blue-400 mr-2">•</span>
+                      <span>{strategy}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
             </div>
-          </div>
-        </Card>
-      </div>
+          </ExpandableSection>
+        </div>
+      </Card>
     </div>
   );
 };
+
+// Helper Components
+interface StatusItemProps {
+  label: string;
+  value: string;
+  icon: string;
+  colorClass: string;
+  subtext?: string;
+}
+
+const StatusItem: React.FC<StatusItemProps> = ({ label, value, icon, colorClass, subtext }) => (
+  <div className="bg-gray-800/30 p-3 rounded border border-gray-700">
+    <div className="flex items-center justify-between mb-1">
+      <span className="text-xs text-gray-400 font-medium">{label}</span>
+      <Icon path={icon} className={`w-4 h-4 ${colorClass}`} />
+    </div>
+    <div className={`text-sm font-semibold ${colorClass}`}>{value}</div>
+    {subtext && <div className="text-xs text-gray-500 mt-1">{subtext}</div>}
+  </div>
+);
+
+interface InfoRowProps {
+  label: string;
+  value: string;
+  colorClass?: string;
+}
+
+const InfoRow: React.FC<InfoRowProps> = ({ label, value, colorClass = 'text-gray-300' }) => (
+  <div className="flex justify-between items-start py-1">
+    <span className="text-gray-400 text-xs font-medium min-w-0 mr-3">{label}:</span>
+    <span className={`text-xs ${colorClass} text-right`}>{value}</span>
+  </div>
+);
+
+interface ExpandableSectionProps {
+  title: string;
+  children: React.ReactNode;
+  isExpanded: boolean;
+  onToggle: () => void;
+}
+
+const ExpandableSection: React.FC<ExpandableSectionProps> = ({ title, children, isExpanded, onToggle }) => (
+  <div className="bg-gray-800/20 rounded border border-gray-700">
+    <button
+      onClick={onToggle}
+      className="w-full p-3 text-left flex justify-between items-center hover:bg-gray-700/20 transition-colors"
+    >
+      <span className="font-medium text-gray-200">{title}</span>
+      <Icon 
+        path="M19 9l-7 7-7-7" 
+        className={`w-4 h-4 text-gray-400 transition-transform ${isExpanded ? 'rotate-180' : ''}`} 
+      />
+    </button>
+    {isExpanded && (
+      <div className="px-3 pb-3 border-t border-gray-700">
+        {children}
+      </div>
+    )}
+  </div>
+);
 
 export default MonitoringPanel;

@@ -1,0 +1,18 @@
+version: "3.8"
+
+services:
+  open_interpreter:
+    image: ghcr.io/openai/open-interpreter:latest
+    container_name: open_interpreter_secure
+    runtime: runsc
+    security_opt:
+      - seccomp: ./security/seccomp/oi_seccomp.json
+    network_mode: host
+    volumes:
+      - ./security/gvisor:/etc/gvisor
+      - ./data:/data
+      - ./models:/models
+    restart: unless-stopped
+
+# To start with gVisor sandbox:
+# docker-compose -f docker-compose-oi-secure.yml up -d

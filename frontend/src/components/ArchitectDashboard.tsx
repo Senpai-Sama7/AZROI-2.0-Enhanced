@@ -3,6 +3,7 @@ import Card from './common/Card';
 import Icon from './common/Icon';
 import { ICON_TERMINAL, ICON_DOCUMENT_TEXT, ICON_CHEVRON_DOWN, ICON_COG, ICON_LIGHT_BULB, ICON_EXCLAMATION_TRIANGLE } from '../constants';
 import type { ArchitectGoal, Agent, ArchitectOutput } from '../types';
+import { renderOutputContent } from './OutputContentRenderer';
 
 interface ArchitectDashboardProps {
   currentGoal: ArchitectGoal | null;
@@ -92,41 +93,6 @@ const ArchitectDashboard: React.FC<ArchitectDashboardProps> = ({ currentGoal, ag
 
 
   const filteredOutputs = outputs.filter(output => output.type === activeOutputTab);
-
-  const renderOutputContent = (output: ArchitectOutput) => {
-    const contentStyle = "text-gray-300 text-xs leading-relaxed";
-    if (output.url) {
-      return (
-        <a 
-          href={output.url} 
-          target="_blank" 
-          rel="noopener noreferrer" 
-          className="text-pink-400 hover:text-pink-300 hover:underline break-all"
-          title={`Open ${output.title || output.type} in new tab`}
-        >
-          {output.content || output.url}
-        </a>
-      );
-    }
-    
-    // Handle known specific output types
-    if (output.type === 'code_file' || output.type === 'dockerfile' || output.type === 'plan') {
-      return (
-        <pre className={`${contentStyle} whitespace-pre-wrap bg-black/40 p-2 rounded-md overflow-x-auto custom-scrollbar border border-gray-700/50 shadow-inner`}>
-          <code className="break-words overflow-wrap-anywhere">{output.content}</code>
-        </pre>
-      );
-    }
-    
-    let logTextColor = "text-gray-300"; // Default for INFO or unspecified
-    if (output.level === 'ERROR') logTextColor = "text-red-400";
-    else if (output.level === 'WARNING') logTextColor = "text-yellow-400";
-    else if (output.level === 'INFO' && output.sourceAgent && !['System', 'Frontend', 'WebSocket_Connection_Placeholder'].includes(output.sourceAgent)) logTextColor = "text-blue-300";
-
-
-    return <span className={`${contentStyle} ${logTextColor} whitespace-pre-wrap`}>{output.content}</span>;
-  };
-
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-12 gap-4 animate-slide-up">
@@ -241,7 +207,7 @@ const ArchitectDashboard: React.FC<ArchitectDashboardProps> = ({ currentGoal, ag
                   </h5>
                   <span className="text-xs text-gray-500 flex-shrink-0 ml-1.5">{new Date(output.timestamp).toLocaleTimeString()}</span>
                 </div>
-                <div className="pl-0.5"> {/* No extra padding for content itself, let renderOutputContent handle it */}
+                <div className="pl-0.5">
                     {renderOutputContent(output)}
                 </div>
               </div>

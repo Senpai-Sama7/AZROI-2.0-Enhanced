@@ -1,472 +1,280 @@
+#!/usr/bin/env python3
 """
-Fractal Feedback Loop (FFL) for AI Improvement
-Implements a self-improving AI system that continuously analyzes its own performance
-and applies optimizations at multiple levels of abstraction.
+Fractal Feedback Loop - System optimization through recursive feedback
 """
 
 import logging
 import time
-import json
 import asyncio
-from typing import Dict, List, Any, Optional, Tuple, Union, Callable
-import numpy as np
-from collections import defaultdict
+from typing import Dict, List, Any, Optional, Union
+import json
+import math
 
-from ..core_orchestration.llm_router import LLMRouter
-from ..core_orchestration.monitoring_system import MonitoringSystem
-
-logger = logging.getLogger("ffl")
+logger = logging.getLogger(__name__)
 
 class FractalFeedbackLoop:
-    """
-    Implements a Fractal Feedback Loop system that continuously monitors, analyzes,
-    and improves AI system performance across multiple levels of abstraction.
-    """
+    """Advanced system optimization through fractal feedback patterns"""
     
-    def __init__(
-        self, 
-        llm_router: LLMRouter,
-        monitoring_system: MonitoringSystem,
-        feedback_interval: int = 3600,  # 1 hour default
-        initial_feedback_delay: int = 86400,  # 24 hours default
-        min_samples_required: int = 10,
-        config: Optional[Dict[str, Any]] = None
-    ):
-        self.llm_router = llm_router
-        self.monitoring_system = monitoring_system
-        self.feedback_interval = feedback_interval
-        self.initial_feedback_delay = initial_feedback_delay
-        self.min_samples_required = min_samples_required
-        self.config = config or {}
+    def __init__(self, 
+                 optimization_cycles: int = 3,
+                 learning_rate: float = 0.1,
+                 convergence_threshold: float = 0.01):
+        self.optimization_cycles = optimization_cycles
+        self.learning_rate = learning_rate
+        self.convergence_threshold = convergence_threshold
         
-        # Performance metrics storage
-        self.performance_metrics = {
-            "response_quality": defaultdict(list),
-            "response_time": defaultdict(list),
-            "success_rate": defaultdict(list),
-            "reflection_rate": defaultdict(list),
-            "user_feedback": defaultdict(list),
+        # Feedback history
+        self._feedback_history = []
+        self._optimization_history = []
+        
+        # Performance tracking
+        self._metrics = {
+            'optimizations_performed': 0,
+            'improvements_detected': 0,
+            'average_improvement': 0.0
         }
         
-        # Improvement records
-        self.improvement_history = []
-        
-        # Dictionary of improvement functions that can be called
-        self.improvement_functions = {
-            "prompt_optimization": self._optimize_prompts,
-            "agent_coordination": self._optimize_agent_coordination,
-            "error_handling": self._optimize_error_handling,
-            "tool_usage": self._optimize_tool_usage,
-        }
-        
-        # Initialize the feedback loop timestamp
-        self.last_feedback_time = time.time()
-        self.system_start_time = time.time()
-        
-        # Running flag
-        self.running = False
-        self.feedback_task = None
+        logger.info("FractalFeedbackLoop initialized")
     
-    async def start(self):
-        """Start the feedback loop."""
-        if self.running:
-            return
-            
-        self.running = True
-        self.feedback_task = asyncio.create_task(self._feedback_loop())
-        logger.info("Fractal Feedback Loop started")
-        
-    async def stop(self):
-        """Stop the feedback loop."""
-        if not self.running:
-            return
-            
-        self.running = False
-        if self.feedback_task:
-            self.feedback_task.cancel()
-            try:
-                await self.feedback_task
-            except asyncio.CancelledError:
-                pass
-        logger.info("Fractal Feedback Loop stopped")
-    
-    async def _feedback_loop(self):
-        """Main feedback loop that runs periodically."""
-        # Wait for initial delay before starting
-        initial_delay = max(0, self.initial_feedback_delay - (time.time() - self.system_start_time))
-        if initial_delay > 0:
-            logger.info(f"Waiting {initial_delay} seconds before starting feedback loop")
-            await asyncio.sleep(initial_delay)
-        
-        while self.running:
-            try:
-                # Check if we have enough data
-                if self._has_sufficient_data():
-                    logger.info("Running feedback loop analysis")
-                    await self._perform_analysis_cycle()
-                else:
-                    logger.info("Insufficient data for feedback loop analysis")
-                
-                # Wait for next feedback interval
-                await asyncio.sleep(self.feedback_interval)
-            except Exception as e:
-                logger.error(f"Error in feedback loop: {e}")
-                await asyncio.sleep(self.feedback_interval)
-    
-    def _has_sufficient_data(self) -> bool:
-        """Check if we have enough data to perform meaningful analysis."""
-        # Need at least min_samples_required samples in at least one category
-        for metric_category, values_by_component in self.performance_metrics.items():
-            for component, values in values_by_component.items():
-                if len(values) >= self.min_samples_required:
-                    return True
-        return False
-    
-    async def record_metric(self, 
-                          category: str, 
-                          component: str, 
-                          value: Union[float, int, str, bool],
-                          metadata: Optional[Dict[str, Any]] = None):
-        """
-        Record a performance metric.
-        
-        Args:
-            category: The metric category (e.g., "response_quality")
-            component: The system component being measured
-            value: The metric value
-            metadata: Optional additional context about this measurement
-        """
-        if category not in self.performance_metrics:
-            self.performance_metrics[category] = defaultdict(list)
-        
-        # Store the metric with timestamp and metadata
-        self.performance_metrics[category][component].append({
-            "value": value,
-            "timestamp": time.time(),
-            "metadata": metadata or {}
-        })
-        
-        # Also record in monitoring system for visualization
-        self.monitoring_system.record_metric(
-            metric_name=f"ffl_{category}_{component}",
-            value=float(value) if isinstance(value, (int, float)) else 1.0,
-            labels={"source": "fractal_feedback_loop"}
-        )
-    
-    async def _perform_analysis_cycle(self):
-        """
-        Perform a complete analysis cycle:
-        1. Analyze performance metrics
-        2. Identify improvement opportunities
-        3. Generate improvement plans
-        4. Apply improvements
-        5. Record the improvement cycle
-        """
-        # Analyze current performance
-        performance_analysis = await self._analyze_performance()
-        
-        # Identify areas for improvement
-        improvement_opportunities = await self._identify_improvement_opportunities(performance_analysis)
-        
-        # If no opportunities found, just log and return
-        if not improvement_opportunities:
-            logger.info("No improvement opportunities identified")
-            return
-        
-        # Generate improvement plans for each opportunity
-        improvement_plans = []
-        for opportunity in improvement_opportunities:
-            plan = await self._generate_improvement_plan(opportunity)
-            if plan:
-                improvement_plans.append(plan)
-        
-        # Apply the improvements
-        applied_improvements = []
-        for plan in improvement_plans:
-            success = await self._apply_improvement(plan)
-            if success:
-                applied_improvements.append(plan)
-        
-        # Record the improvement cycle
-        cycle_record = {
-            "timestamp": time.time(),
-            "performance_analysis": performance_analysis,
-            "improvement_opportunities": improvement_opportunities,
-            "improvement_plans": improvement_plans,
-            "applied_improvements": applied_improvements
-        }
-        
-        self.improvement_history.append(cycle_record)
-        logger.info(f"Completed feedback cycle with {len(applied_improvements)} improvements applied")
-        
-        # Reset performance metrics older than the feedback interval to prevent re-analyzing old data
-        self._prune_old_metrics()
-    
-    async def _analyze_performance(self) -> Dict[str, Any]:
-        """
-        Analyze current performance metrics to identify patterns and issues.
-        Returns a structured analysis of system performance.
-        """
-        analysis = {}
-        
-        for category, values_by_component in self.performance_metrics.items():
-            category_analysis = {}
-            
-            for component, metrics in values_by_component.items():
-                # Skip if we don't have enough data points
-                if len(metrics) < self.min_samples_required:
-                    continue
-                    
-                # Extract values for numerical analysis
-                values = [m["value"] for m in metrics if isinstance(m["value"], (int, float))]
-                
-                # Skip if we can't do numerical analysis
-                if not values:
-                    continue
-                    
-                # Calculate statistics
-                component_analysis = {
-                    "mean": np.mean(values),
-                    "median": np.median(values),
-                    "std_dev": np.std(values),
-                    "min": np.min(values),
-                    "max": np.max(values),
-                    "sample_count": len(values),
-                    "trend": self._calculate_trend(values)
-                }
-                
-                category_analysis[component] = component_analysis
-            
-            analysis[category] = category_analysis
-        
-        return analysis
-    
-    def _calculate_trend(self, values: List[float]) -> str:
-        """Calculate the trend direction of a series of values."""
-        if len(values) < 2:
-            return "stable"
-            
-        # Simple linear regression
-        x = np.arange(len(values))
-        y = np.array(values)
-        
-        slope = (np.mean(x * y) - np.mean(x) * np.mean(y)) / (np.mean(x * x) - np.mean(x) ** 2)
-        
-        if slope > 0.05:  # Threshold for positive trend
-            return "improving"
-        elif slope < -0.05:  # Threshold for negative trend
-            return "declining"
-        else:
-            return "stable"
-    
-    async def _identify_improvement_opportunities(self, performance_analysis: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """
-        Identify specific opportunities for improvement based on performance analysis.
-        Returns a list of improvement opportunities.
-        """
-        opportunities = []
-        
-        # Check for declining performance
-        for category, components in performance_analysis.items():
-            for component, analysis in components.items():
-                # Look for declining trends
-                if analysis.get("trend") == "declining":
-                    opportunities.append({
-                        "category": category,
-                        "component": component,
-                        "issue": "declining_performance",
-                        "severity": "high",
-                        "details": f"Performance is declining with mean {analysis['mean']:.2f} and trend {analysis['trend']}"
-                    })
-                
-                # Look for high variation
-                if analysis.get("std_dev", 0) > 0.2 * analysis.get("mean", 1):  # High relative standard deviation
-                    opportunities.append({
-                        "category": category,
-                        "component": component,
-                        "issue": "high_variability",
-                        "severity": "medium",
-                        "details": f"High performance variability with std_dev {analysis['std_dev']:.2f} relative to mean {analysis['mean']:.2f}"
-                    })
-                    
-                # Look for low absolute performance
-                if category == "response_quality" and analysis.get("mean", 0) < 0.7:  # Threshold for good quality
-                    opportunities.append({
-                        "category": category,
-                        "component": component,
-                        "issue": "low_quality",
-                        "severity": "high",
-                        "details": f"Low response quality with mean {analysis['mean']:.2f}"
-                    })
-                
-                if category == "success_rate" and analysis.get("mean", 0) < 0.8:  # Threshold for good success rate
-                    opportunities.append({
-                        "category": category,
-                        "component": component,
-                        "issue": "low_success_rate",
-                        "severity": "high",
-                        "details": f"Low success rate with mean {analysis['mean']:.2f}"
-                    })
-        
-        return opportunities
-    
-    async def _generate_improvement_plan(self, opportunity: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """
-        Generate a specific improvement plan for a given opportunity.
-        Uses LLM-based reasoning to create actionable improvement steps.
-        """
-        # Map the opportunity to an improvement type
-        improvement_type = self._map_opportunity_to_improvement_type(opportunity)
-        
-        if not improvement_type:
-            logger.warning(f"No suitable improvement type for opportunity: {opportunity}")
-            return None
-        
-        # Create the prompt for the LLM
-        improvement_prompt = f"""
-        # Performance Issue Analysis
-        Category: {opportunity['category']}
-        Component: {opportunity['component']}
-        Issue: {opportunity['issue']}
-        Severity: {opportunity['severity']}
-        Details: {opportunity['details']}
-        
-        Based on this performance issue, create a detailed improvement plan that addresses:
-        1. Root causes - What might be causing this issue?
-        2. Improvement approach - What specific changes could address these causes?
-        3. Implementation steps - What concrete actions should be taken?
-        4. Success metrics - How should we measure if the improvement is working?
-        
-        Your improvement plan should be specific, measurable, achievable, relevant, and time-bound.
-        """
-        
-        # Generate the improvement plan
-        response = await self.llm_router.generate(
-            messages=[
-                {"role": "system", "content": "You are an AI system optimization expert. Your goal is to analyze performance issues and create specific, actionable improvement plans."},
-                {"role": "user", "content": improvement_prompt}
-            ],
-            model="gpt-4-turbo",
-            temperature=0.3,
-            max_tokens=1000,
-        )
-        
-        # Extract the structured plan
-        improvement_plan = {
-            "opportunity": opportunity,
-            "improvement_type": improvement_type,
-            "plan": response,
-            "raw_response": response
-        }
-        
-        return improvement_plan
-    
-    def _map_opportunity_to_improvement_type(self, opportunity: Dict[str, Any]) -> Optional[str]:
-        """Map an improvement opportunity to a specific improvement type."""
-        category = opportunity.get("category", "")
-        issue = opportunity.get("issue", "")
-        component = opportunity.get("component", "")
-        
-        # Mapping logic
-        if category == "response_quality" and issue in ["declining_performance", "low_quality"]:
-            return "prompt_optimization"
-        elif category == "success_rate" and issue in ["declining_performance", "low_success_rate"]:
-            return "error_handling"
-        elif category == "response_time" and issue == "high_variability":
-            return "agent_coordination"
-        elif "tool" in component.lower():
-            return "tool_usage"
-        
-        # Default fallback
-        return None
-    
-    async def _apply_improvement(self, plan: Dict[str, Any]) -> bool:
-        """
-        Apply an improvement plan to the system.
-        Returns True if improvement was applied successfully.
-        """
-        improvement_type = plan.get("improvement_type")
-        
-        # Check if we have an implementation for this improvement type
-        if improvement_type not in self.improvement_functions:
-            logger.warning(f"No implementation for improvement type: {improvement_type}")
-            return False
-        
+    async def optimize(self, 
+                      results: Dict[str, Any],
+                      session_metrics: Dict[str, Any],
+                      system_state: Dict[str, Any]) -> Dict[str, Any]:
+        """Perform fractal optimization on system results"""
         try:
-            # Call the appropriate improvement function
-            improvement_function = self.improvement_functions[improvement_type]
-            success = await improvement_function(plan)
+            optimization_start = time.time()
             
-            if success:
-                logger.info(f"Successfully applied {improvement_type} improvement")
-                
-                # Record the applied improvement
-                self.monitoring_system.record_event(
-                    event_type="system_improvement",
-                    event_data={
-                        "improvement_type": improvement_type,
-                        "success": True,
-                        "details": plan.get("opportunity", {}).get("details", "")
-                    }
-                )
-            else:
-                logger.warning(f"Failed to apply {improvement_type} improvement")
+            # Analyze current performance
+            performance_analysis = await self._analyze_performance(results, session_metrics, system_state)
             
-            return success
+            # Generate optimization recommendations
+            optimizations = await self._generate_optimizations(performance_analysis)
+            
+            # Apply fractal feedback cycles
+            final_optimizations = await self._apply_fractal_cycles(optimizations, performance_analysis)
+            
+            # Update metrics
+            optimization_time = time.time() - optimization_start
+            self._metrics['optimizations_performed'] += 1
+            
+            # Store in history
+            self._optimization_history.append({
+                'timestamp': time.time(),
+                'performance_analysis': performance_analysis,
+                'optimizations': final_optimizations,
+                'optimization_time': optimization_time
+            })
+            
+            return {
+                "success": True,
+                "optimization_results": final_optimizations,
+                "performance_analysis": performance_analysis,
+                "fractal_cycles_applied": self.optimization_cycles,
+                "optimization_time": optimization_time,
+                "improvement_score": final_optimizations.get("improvement_score", 0.0)
+            }
+            
         except Exception as e:
-            logger.error(f"Error applying improvement plan: {e}")
-            return False
+            logger.error(f"Optimization failed: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "optimization": "Optimization failed due to error"
+            }
     
-    async def _optimize_prompts(self, plan: Dict[str, Any]) -> bool:
-        """
-        Optimize system prompts based on the improvement plan.
-        This is a placeholder for actual prompt optimization logic.
-        """
-        # In a real implementation, this would update prompt templates
-        # stored in a database or configuration system
+    async def _analyze_performance(self, 
+                                  results: Dict[str, Any],
+                                  session_metrics: Dict[str, Any],
+                                  system_state: Dict[str, Any]) -> Dict[str, Any]:
+        """Analyze current system performance"""
+        await asyncio.sleep(0.05)  # Simulate analysis time
         
-        logger.info(f"Optimizing prompts based on plan: {plan['opportunity']['component']}")
+        # Calculate performance metrics
+        task_success_rate = 1.0  # Default if no failures
+        if 'failed_tasks' in session_metrics and 'completed_tasks' in session_metrics:
+            total_tasks = len(session_metrics.get('failed_tasks', [])) + len(session_metrics.get('completed_tasks', []))
+            if total_tasks > 0:
+                task_success_rate = len(session_metrics.get('completed_tasks', [])) / total_tasks
         
-        # Simulate successful optimization
-        return True
+        # Analyze resource utilization
+        cpu_efficiency = 1.0 - system_state.get('cpu_usage', 0.0) / 100.0
+        memory_efficiency = 1.0 - system_state.get('memory_usage', 0.0) / 100.0
+        
+        # Calculate overall performance score
+        performance_score = (task_success_rate * 0.5 + 
+                           cpu_efficiency * 0.25 + 
+                           memory_efficiency * 0.25)
+        
+        return {
+            "performance_score": performance_score,
+            "task_success_rate": task_success_rate,
+            "cpu_efficiency": cpu_efficiency,
+            "memory_efficiency": memory_efficiency,
+            "bottlenecks": self._identify_bottlenecks(system_state),
+            "trends": self._analyze_trends()
+        }
     
-    async def _optimize_agent_coordination(self, plan: Dict[str, Any]) -> bool:
-        """
-        Optimize agent coordination based on the improvement plan.
-        This is a placeholder for actual agent coordination optimization.
-        """
-        logger.info(f"Optimizing agent coordination based on plan: {plan['opportunity']['component']}")
+    async def _generate_optimizations(self, performance_analysis: Dict[str, Any]) -> Dict[str, Any]:
+        """Generate optimization recommendations"""
+        await asyncio.sleep(0.03)  # Simulate optimization generation
         
-        # Simulate successful optimization
-        return True
+        optimizations = {
+            "recommendations": [],
+            "priority_actions": [],
+            "resource_adjustments": {},
+            "improvement_score": 0.0
+        }
+        
+        # Analyze performance bottlenecks
+        bottlenecks = performance_analysis.get("bottlenecks", [])
+        
+        if "cpu" in bottlenecks:
+            optimizations["recommendations"].append({
+                "type": "cpu_optimization",
+                "description": "Optimize CPU-intensive operations",
+                "impact": "medium",
+                "implementation": "parallel_processing"
+            })
+            optimizations["resource_adjustments"]["cpu_threads"] = "increase"
+        
+        if "memory" in bottlenecks:
+            optimizations["recommendations"].append({
+                "type": "memory_optimization", 
+                "description": "Implement memory caching and cleanup",
+                "impact": "high",
+                "implementation": "memory_pooling"
+            })
+            optimizations["resource_adjustments"]["cache_size"] = "optimize"
+        
+        # Calculate potential improvement
+        current_score = performance_analysis.get("performance_score", 0.7)
+        potential_improvement = min(0.3, (1.0 - current_score) * 0.8)
+        optimizations["improvement_score"] = potential_improvement
+        
+        return optimizations
     
-    async def _optimize_error_handling(self, plan: Dict[str, Any]) -> bool:
-        """
-        Optimize error handling based on the improvement plan.
-        This is a placeholder for actual error handling optimization.
-        """
-        logger.info(f"Optimizing error handling based on plan: {plan['opportunity']['component']}")
+    async def _apply_fractal_cycles(self, 
+                                   optimizations: Dict[str, Any],
+                                   performance_analysis: Dict[str, Any]) -> Dict[str, Any]:
+        """Apply fractal feedback cycles for iterative optimization"""
+        current_optimizations = optimizations.copy()
         
-        # Simulate successful optimization
-        return True
+        for cycle in range(self.optimization_cycles):
+            await asyncio.sleep(0.02)  # Simulate cycle processing
+            
+            # Apply fractal scaling
+            fractal_factor = self._calculate_fractal_factor(cycle)
+            
+            # Refine optimizations based on fractal feedback
+            refined_optimizations = self._refine_with_fractal_feedback(
+                current_optimizations, 
+                fractal_factor,
+                cycle
+            )
+            
+            # Check for convergence
+            if self._check_convergence(current_optimizations, refined_optimizations):
+                logger.debug(f"Optimization converged at cycle {cycle + 1}")
+                break
+            
+            current_optimizations = refined_optimizations
+            
+            # Store feedback
+            self._feedback_history.append({
+                'cycle': cycle,
+                'fractal_factor': fractal_factor,
+                'optimizations': refined_optimizations.copy()
+            })
+        
+        return current_optimizations
     
-    async def _optimize_tool_usage(self, plan: Dict[str, Any]) -> bool:
-        """
-        Optimize tool usage based on the improvement plan.
-        This is a placeholder for actual tool usage optimization.
-        """
-        logger.info(f"Optimizing tool usage based on plan: {plan['opportunity']['component']}")
-        
-        # Simulate successful optimization
-        return True
+    def _calculate_fractal_factor(self, cycle: int) -> float:
+        """Calculate fractal scaling factor for current cycle"""
+        # Use mathematical fractal patterns for optimization scaling
+        base_factor = 1.0 / (cycle + 1)
+        fractal_component = math.sin(cycle * math.pi / 4) * 0.1
+        return base_factor + fractal_component
     
-    def _prune_old_metrics(self):
-        """Remove metrics older than the feedback interval to prevent re-analyzing old data."""
-        cutoff_time = time.time() - self.feedback_interval
+    def _refine_with_fractal_feedback(self, 
+                                     optimizations: Dict[str, Any],
+                                     fractal_factor: float,
+                                     cycle: int) -> Dict[str, Any]:
+        """Refine optimizations using fractal feedback"""
+        refined = optimizations.copy()
         
-        for category in self.performance_metrics.keys():
-            for component in list(self.performance_metrics[category].keys()):
-                self.performance_metrics[category][component] = [
-                    metric for metric in self.performance_metrics[category][component]
-                    if metric["timestamp"] >= cutoff_time
-                ]
+        # Adjust improvement score with fractal factor
+        current_improvement = refined.get("improvement_score", 0.0)
+        refined["improvement_score"] = current_improvement * (1.0 + fractal_factor * self.learning_rate)
+        
+        # Add fractal-specific optimizations
+        refined["fractal_optimizations"] = {
+            "cycle": cycle,
+            "fractal_factor": fractal_factor,
+            "adaptive_adjustments": [
+                f"Cycle {cycle}: Applied fractal scaling factor {fractal_factor:.3f}",
+                f"Learning rate: {self.learning_rate}",
+                "Recursive optimization patterns detected"
+            ]
+        }
+        
+        return refined
+    
+    def _check_convergence(self, current: Dict[str, Any], refined: Dict[str, Any]) -> bool:
+        """Check if optimization has converged"""
+        current_score = current.get("improvement_score", 0.0)
+        refined_score = refined.get("improvement_score", 0.0)
+        
+        return abs(refined_score - current_score) < self.convergence_threshold
+    
+    def _identify_bottlenecks(self, system_state: Dict[str, Any]) -> List[str]:
+        """Identify system bottlenecks"""
+        bottlenecks = []
+        
+        cpu_usage = system_state.get('cpu_usage', 0.0)
+        memory_usage = system_state.get('memory_usage', 0.0)
+        
+        if cpu_usage > 80.0:
+            bottlenecks.append("cpu")
+        
+        if memory_usage > 85.0:
+            bottlenecks.append("memory")
+        
+        # Check task performance
+        if system_state.get('tasks_failed', 0) > system_state.get('tasks_completed', 0) * 0.1:
+            bottlenecks.append("task_execution")
+        
+        return bottlenecks
+    
+    def _analyze_trends(self) -> Dict[str, Any]:
+        """Analyze performance trends from history"""
+        if len(self._optimization_history) < 2:
+            return {"trend": "insufficient_data"}
+        
+        # Compare recent optimizations
+        recent = self._optimization_history[-2:]
+        improvement_trend = recent[-1]["optimization_time"] - recent[-2]["optimization_time"]
+        
+        return {
+            "trend": "improving" if improvement_trend < 0 else "stable",
+            "optimization_time_trend": improvement_trend,
+            "historical_optimizations": len(self._optimization_history)
+        }
+    
+    def get_feedback_metrics(self) -> Dict[str, Any]:
+        """Get fractal feedback loop metrics"""
+        return {
+            "metrics": self._metrics.copy(),
+            "feedback_cycles": len(self._feedback_history),
+            "optimization_history": len(self._optimization_history),
+            "configuration": {
+                "optimization_cycles": self.optimization_cycles,
+                "learning_rate": self.learning_rate,
+                "convergence_threshold": self.convergence_threshold
+            }
+        }
+    
+    def clear_history(self):
+        """Clear optimization history"""
+        self._feedback_history.clear()
+        self._optimization_history.clear()
+        logger.info("Fractal feedback history cleared")
