@@ -1,0 +1,143 @@
+﻿Project AZROI: IDE AI Agent Master Improvement Prompt
+Objective: Transform the provided "Project AZROI" codebase and associated plans into a complete, production-ready, and industry-leading "Autonomous AI Architect" system. This involves fully realizing all features and capabilities for a seamless user experience, robust multi-agent orchestration using CrewAI, and comprehensive backend functionality, including multi-cloud deployment parity (GCP and Azure).
+Your Role: You are the Autonomous Master Software Engineer & AI Integration Specialist. Your mission is to meticulously analyze the provided context and autonomously execute all necessary code modifications, architectural refinements, feature implementations, and documentation updates to achieve the project's vision.
+Critical Contextual Inputs (Assume Full Access & Understanding):
+1. The Entire Current Project AZROI Codebase: All files and directories as provided (e.g., senpai-sama7/project_azroi/...). Pay close attention to backend/core_orchestration/agent_orchestrator.py, backend/main.py, agent implementations in backend/agents/, the frontend structure in frontend/src/ (especially App.tsx, ArchitectDashboard.tsx, GoalInputPanel.tsx), and all configuration files.
+2. Project Vision & User Guides:
+   * README.md: Outlines the project's vision and high-level features.
+   * HOW_TO_USE.md (and PDF version): Defines the target user experience and capabilities, including multi-cloud.
+   * EASY_INSTALL.md: User setup instructions.
+3. Strategic & Analytical Documents:
+   * AZROI_UI_CrewAI_Strategy_v1_json (Your primary JSON strategy document): Contains the consolidated plan for UI and CrewAI integration. This is a key reference for specific implementation details.
+   * Deep_Research_Project AZROI_ Improvement Plan.json (and .txt version): Provides critical analysis, identifies gaps, and offers high-impact recommendations, especially regarding the criticality of CrewAI Tools, UI's dependency on backend maturity, refined WebSocket communication, and user-centric design for non-technical users. This document's insights must heavily inform your execution.
+   * Google Studio Analysis.txt: Original transformation master plan.
+   * GEMINI 2.5 ANALYSIS.txt: Contains Phase 1 completion report, gap analysis, and an earlier version of the master plan.
+   * how to complete azroi.txt: Contains initial evaluations and ideas for system improvement.
+   * AZROI_FIX.json: Contains customized AI system instructions and initial project analysis.
+4. Testing Documentation:
+   * TESTING.md: Outlines existing and planned testing strategies.
+Core Mission & Directives:
+Your sole mission is to autonomously evolve Project AZROI to a state of complete functionality and excellence by:
+1. Implementing the detailed strategies outlined in AZROI_UI_CrewAI_Strategy_v1_json.
+2. Critically incorporating the refined recommendations and addressing the gaps highlighted in Deep_Research_Project AZROI_ Improvement Plan.json and Deep_Research_CrewAI Integration and UI Plan_.txt.
+3. Ensuring full feature parity with README.md and HOW_TO_USE.md.
+4. Addressing known issues from the codebase and analytical documents (e.g., placeholder logic, duplicate frontend files if frontend/src/ is canonical).
+Key Execution Imperatives (The Improvement Plan):
+I. Foundational Backend: Full CrewAI Orchestration
+(This is the highest priority. The UI's effectiveness depends on a functional CrewAI backend. Refer heavily to Deep_Research... recommendations for CrewAI Tool definition and AgentOrchestrator responsibilities.)
+1. AgentOrchestrator.py Complete Refactoring:
+   * Eliminate Placeholder Logic: Replace all placeholder execution logic with a robust CrewAI-centric implementation.
+   * Crew Management: Implement dynamic CrewAI Crew definition, instantiation (based on PlannerAgent output), and lifecycle management (crew.kickoff(), monitoring, completion/failure handling).
+   * Task Management: Dynamically create CrewAI Task objects from the PlannerAgent's structured output, assigning them to the correct agents with necessary context.
+   * Pre-Analysis & Planning Invocation: Integrate the flow where AgentOrchestrator invokes pre-analysis (e.g., via ProjectManagerAgent or a dedicated pre-analysis step using Gemini) and then the PlannerAgent to generate the task list for the crew.
+   * State Tracking & Callbacks: Implement the update_task_state_fn mechanism. Integrate deeply with CrewAI's callback system to capture granular, real-time updates on agent actions, tool usage, and task statuses.
+   * WebSocket Abstraction Layer: Implement the "translation/abstraction layer" recommended in Deep_Research... to convert raw CrewAI events into curated, UI-friendly WebSocket messages.
+2. CrewAI Agent Implementation & Enhancement:
+   * Instantiate All Defined Agents: Implement all agents specified in AZROI_UI_CrewAI_Strategy_v1_json (Section 4.a: ProjectManagerAgent, PlannerAgent, ArchitectAgent, CodeExecutionAgent, GCPCloudAgent, AzureCloudAgent, QualityAssuranceAgent) as CrewAI Agent objects.
+   * Define role, goal, backstory: For each agent, craft a clear, concise, and effective role, goal, and backstory to optimize LLM performance and ensure adherence to specialized functions.
+   * LLM Configuration: Ensure agents are configured to use appropriate LLMs via the LLMRouter.py.
+3. CRITICAL - Define and Implement CrewAI Tools:
+   * For each specialized agent, design, implement, and test a comprehensive set of granular CrewAI Tools. These Tools are the primary mechanism by which agents perform actions.
+   * Translate existing "agent services" or "API contracts" (e.g., OpenInterpreterService, cloud SDK calls within CloudAgent.py) into distinct, well-defined CrewAI Tools with clear input/output schemas (use Pydantic).
+   * Examples (ensure these are covered based on AZROI_UI_CrewAI_Strategy_v1_json Section 4.b and Deep_Research... emphasis):
+      * PlannerAgent Tools: LLMPlanningTool, TaskDependencyTool.
+      * CodeExecutionAgent Tools: OpenInterpreterExecutionTool, FileLinterTool, StaticAnalysisTool, DockerfileValidatorTool.
+      * GCPCloudAgent/AzureCloudAgent Tools: Specific tools for each cloud operation (e.g., CreateStorageBucketTool, DeployToCloudRunTool, BuildImageACRTool).
+      * QA_Agent Tools: PytestExecutionTool, APITestClientTool.
+4. Inter-Agent Communication & Data Exchange:
+   * Prioritize CrewAI Context Passing: Utilize CrewAI's native mechanisms for passing context and data between tasks.
+   * Pydantic Models: Implement Pydantic models for all Task expected_output definitions and for the inputs/outputs of all CrewAI Tools to ensure data integrity and clear contracts.
+   * Large Artifact Handling: For large artifacts (code, images), agents save to a shared location (local temp or cloud storage), and the URI/path is passed via CrewAI context. MemoryManager.py (Qdrant) stores metadata and references.
+II. Frontend UI: Finalization for CrewAI & User Experience
+(Develop UI components iteratively, ensuring they align with maturing backend CrewAI capabilities. Prioritize clarity for non-technical users as emphasized in Deep_Research...)
+1. Implement Detailed UI Specifications for CrewAI Visualization (Ref: AZROI_UI_CrewAI_Strategy_v1_json Section 3.a & Deep_Research... Table 1):
+   * GlobalCrewOverviewPanel: Display active Crew ID, overall status, and list of Agents with high-level statuses.
+   * DetailedAgentInteractionPanel (e.g., within ArchitectDashboard.tsx):
+      * Show agent name, role, current CrewAI Task description.
+      * Clear visual indicators for agent states: IDLE, THINKING/PLANNING, USING_TOOL (display tool name), WAITING_FOR_DATA, TASK_COMPLETED, ERROR_IN_TASK.
+      * Visualize task handoffs and transitions.
+      * Dedicated display for agent-specific outputs, artifacts (with syntax highlighting, previews, copy options), and errors.
+      * Agent-specific, filterable log stream.
+   * TaskFlowVisualizationPanel: Dynamic visual representation (DAG/timeline) of CrewAI Tasks, dependencies, assigned agents, and real-time progress. Include progress indicators/bars where feasible.
+2. Refine WebSocket Communication & Real-Time Feedback:
+   * Implement Enhanced WebSocket Message Types: Adopt the augmented message types detailed in AZROI_UI_CrewAI_Strategy_v1_json (Section 5.a) and further refined by Deep_Research... (e.g., CrewKickoffMessage, TaskStartMessage, AgentToolUsageMessage, AgentLogMessage) to carry granular CrewAI state.
+   * Frontend WebSocket Handling (useGoalWebsocket.ts or equivalent): Ensure robust parsing and dynamic updates of all relevant UI components (MultiAgentStatusPanel.tsx, LogPanel.tsx, OutputArtifactsPanel.tsx) based on these messages.
+   * Semantic & User-Friendly Logging (LogPanel.tsx): Implement color-coding by agent/severity. Offer an optional "plain English" log stream. Include contextual links from logs to artifacts.
+3. Gemini-Powered Analysis Integration:
+   * Client-Side Refinement (GoalInputPanel.tsx): Enhance to clearly present client-side Gemini suggestions for direct user edit/acceptance.
+   * Backend Analysis Confirmation: Display the "System's Understanding of Your Goal" (from backend Gemini analysis) for final user confirmation before full crew execution.
+4. User-Centric Design & Accessibility (Targeting Non-Technical Users):
+   * Guided Goal Input: Improve GoalInputPanel.tsx with illustrative examples, tooltips, potentially a wizard-style flow.
+   * Consistent Visual Language: Use clear, intuitive iconography and visual cues throughout.
+   * Actionable Error Messaging: Ensure all UI error messages are user-friendly, explain the problem simply, and suggest actionable next steps.
+   * Demystify AI Processes: Prioritize UI design choices that make agent activities and decisions understandable. Avoid technical jargon in user-facing text.
+5. Code Quality & Cleanup:
+   * Consolidate Frontend Structure: Ensure frontend/src/ is the canonical source. Analyze and remove any duplicate/deprecated files at the root level (e.g., App.tsx, types.ts, components/, services/, constants.ts if they are superseded by versions in frontend/src/).
+   * CSS & Theme: Resolve CSS redundancies (e.g., .starry-background) and ensure consistent "Deep Space Gemstone" theme application.
+III. Feature Parity & System-Wide Enhancements
+1. Full Azure Cloud Support:
+   * Implement and test the AzureCloudAgent with all necessary CrewAI Tools for Azure Blob Storage, ACR (and image builds), Azure App Service/Functions deployment.
+   * Ensure CodeExecutionAgent can generate Azure-specific IaC (e.g., Terraform HCL for Azure) via OI, with validation.
+   * Update UI to fully support Azure target selection and display Azure-specific artifacts/progress.
+2. Mature Persistent Memory (Qdrant - MemoryManager.py, vector_storage.py):
+   * Implement robust RAG capabilities for PlannerAgent (planning patterns) and CodeExecutionAgent (code snippets, best practices) using Qdrant.
+   * Ensure comprehensive metadata storage with all Qdrant vectors.
+   * Store project history, user preferences (if applicable), and error/resolution patterns.
+   * Consider UI features to browse relevant project_history or learned_patterns.
+3. Master Open Interpreter Integration (OpenInterpreterService / SafetySandbox.py):
+   * Formalize as a robust service wrapped by CrewAI Tools for CodeExecutionAgent.
+   * Implement the full multi-stage validation and self-correction loop (linting, static analysis, dry-runs, feedback to OI for fixes). Make this process visible in UI logs.
+   * Ensure dynamic and contextual prompt engineering for OI.
+4. System-Wide Error Handling, Logging, and Resilience:
+   * Implement centralized, structured JSON logging throughout the backend.
+   * Define and use a hierarchy of custom exceptions.
+   * Integrate tenacity for robust, configurable retries on all critical external API calls (LLMs, Cloud SDKs).
+   * Ensure critical operations are idempotent.
+5. Security Hardening:
+   * Rigorous input sanitization for all API inputs and prompts.
+   * Secure secrets management (ensure no hardcoded secrets; guide towards external stores like GCP Secret Manager/Azure Key Vault in documentation, but ensure current .env based flow is as secure as possible for development).
+   * Develop OI prompts that encourage secure code generation.
+   * Integrate automated dependency vulnerability scanning (e.g., pip-audit, npm audit) into CI/CD.
+   * Ensure secure deployment defaults for cloud services.
+IV. Engineering Rigor & Finalization
+1. Comprehensive Testing Strategy (Implement/Expand TESTING.MD):
+   * Unit Tests: High coverage for backend modules, CrewAI Agent logic, and especially all CrewAI Tools (mocking external calls). Jest/RTL for frontend components.
+   * Integration Tests:
+      * AgentOrchestrator's ability to configure and kick off Crews.
+      * Individual Agents executing Tasks with Tools within the CrewAI framework.
+      * Data flow between Tasks via CrewAI context.
+      * WebSocket pipeline (backend events to UI updates).
+   * End-to-End (E2E) Tests: Full user journeys for both GCP and Azure, from goal input to deployed service, programmatically verifying outcomes.
+   * Update TESTING.MD to reflect the full, implemented strategy.
+2. Documentation and Code Quality:
+   * Enforce Linting/Formatting: Black/Flake8 (Python), Prettier/ESLint (TypeScript) via pre-commit hooks and CI.
+   * Comprehensive Commenting: Google-style docstrings (Python), JSDoc/TSDoc (TS/React). Inline comments for complex logic.
+   * Update All Project Documentation: README.md, HOW_TO_USE.md, EASY_INSTALL.md must perfectly reflect the final system for both GCP and Azure.
+   * Create/Update Architectural Design Document (ADD): In docs/, detail the final multi-agent architecture, CrewAI integration, data flows, and key design decisions.
+   * API Documentation: Ensure FastAPI auto-generated Swagger/OpenAPI docs are comprehensive.
+3. Foundations for Advanced Autonomy & Continual Intelligence (Ref: AZROI_UI_CrewAI_Strategy_v1_json Section IV.l):
+   * Implement detailed data logging for OI interactions, agent decisions, and LLM calls to Qdrant or a dedicated log store for future analysis/fine-tuning.
+   * Ensure the architecture (CloudAgent interface, LLMRouter, FFL plugin system) supports extensibility.
+Operational Constraints & Output Requirements:
+* Autonomy: Execute this entire mandate with maximal autonomy. If critical ambiguities in this prompt or the referenced documents absolutely prevent progress, halt and output a single, concise message detailing the specific blocker. Otherwise, use your expert judgment to fulfill the intent.
+* Silent Execution (Primary Mode): Your primary output should be the final, complete, modified Project AZROI codebase and updated documentation files. Avoid verbose step-by-step logging during execution unless explicitly part of a debugging/analysis task.
+* Efficiency & Quality: Optimize for efficient resource utilization while producing high-quality, robust, and maintainable code.
+Definition of "Done":
+The project is "done" when:
+* All imperatives in this prompt are fully implemented and verified.
+* The system robustly orchestrates tasks using CrewAI with specialized agents and tools.
+* The UI provides a clear, intuitive, and real-time view of the CrewAI operations, catering to non-technical users.
+* Full feature parity with README.md and HOW_TO_USE.md is achieved for both GCP and Azure.
+* All identified bugs, placeholder logic, and major gaps from analytical documents are resolved.
+* The codebase meets the highest standards of engineering excellence (clean, documented, secure, tested).
+* All automated tests (Unit, Integration, E2E) pass for both cloud platforms.
+* All project documentation is comprehensively updated.
+Final Deliverables (Output ONLY these upon completion):
+1. The complete, modified, and fully functional Project AZROI codebase, ready for packaging or version control.
+2. The complete, updated set of documentation files:
+   * README.md
+   * HOW_TO_USE.md
+   * EASY_INSTALL.md
+   * TESTING.MD
+   * docs/ARCHITECTURAL_DESIGN.md (or as named/updated)
+Commence Execution.

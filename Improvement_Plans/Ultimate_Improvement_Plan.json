@@ -1,0 +1,243 @@
+﻿{
+  "project_metadata": {
+        "name": "Project AZROI",
+        "objective": "Transform the provided Project AZROI codebase into a complete, production-ready, and industry-leading Autonomous AI Architect system",
+        "target_system": "Autonomous AI Architect with robust multi-agent orchestration using CrewAI",
+        "deployment_targets": ["Google Cloud Platform (GCP)", "Microsoft Azure"],
+        "ai_role": "Autonomous Master Software Engineer & AI Integration Specialist"
+  },
+ 
+  "critical_inputs": {
+        "codebase_files": {
+          "primary_focus": [
+            "backend/core_orchestration/agent_orchestrator.py",
+            "backend/main.py",
+            "backend/agents/",
+            "frontend/src/App.tsx",
+            "frontend/src/ArchitectDashboard.tsx",
+            "frontend/src/GoalInputPanel.tsx"
+          ],
+          "configuration_files": "All configuration files in the project"
+        },
+        "documentation_hierarchy": {
+          "primary_strategy": "AZROI_UI_CrewAI_Strategy_v1_json",
+          "critical_analysis": "Deep_Research_Project AZROI_ Improvement Plan.json",
+          "user_guides": ["README.md", "HOW_TO_USE.md", "EASY_INSTALL.md"],
+          "technical_analysis": [
+            "Google Studio Analysis.txt",
+            "GEMINI 2.5 ANALYSIS.txt",
+            "how to complete azroi.txt",
+            "AZROI_FIX.json"
+          ],
+          "testing_framework": "TESTING.md"
+        }
+  },
+
+
+  "execution_priorities": {
+        "phase_1_foundational_backend": {
+          "priority_level": "HIGHEST",
+          "description": "Full CrewAI orchestration implementation - UI effectiveness depends on functional CrewAI backend",
+          "key_components": {
+            "agent_orchestrator_refactoring": {
+              "eliminate_placeholders": "Replace all placeholder execution logic with robust CrewAI-centric implementation",
+              "crew_management": "Implement dynamic CrewAI Crew definition, instantiation, and lifecycle management",
+              "task_management": "Dynamically create CrewAI Task objects from PlannerAgent output",
+              "pre_analysis_integration": "Integrate pre-analysis flow via ProjectManagerAgent or dedicated pre-analysis step",
+              "state_tracking": "Implement update_task_state_fn mechanism with CrewAI callback system",
+              "websocket_abstraction": "Implement translation layer for CrewAI events to UI-friendly WebSocket messages"
+            },
+            "crewai_agent_implementation": {
+              "required_agents": [
+                "ProjectManagerAgent",
+                "PlannerAgent",
+                "ArchitectAgent",
+                "CodeExecutionAgent",
+                "GCPCloudAgent",
+                "AzureCloudAgent",
+                "QualityAssuranceAgent"
+              ],
+              "agent_configuration": {
+                "role_definition": "Clear, concise role for each agent",
+                "goal_specification": "Specific goals optimized for LLM performance",
+                "backstory_creation": "Effective backstories for specialized functions",
+                "llm_configuration": "Configure agents with appropriate LLMs via LLMRouter.py"
+              }
+            },
+            "crewai_tools_implementation": {
+              "criticality": "CRITICAL - Primary mechanism for agent actions",
+              "requirements": {
+                "granular_tools": "Comprehensive set of granular CrewAI Tools for each specialized agent",
+                "pydantic_schemas": "Clear input/output schemas using Pydantic",
+                "service_translation": "Translate existing agent services into distinct CrewAI Tools"
+              },
+              "tool_examples": {
+                "PlannerAgent": ["LLMPlanningTool", "TaskDependencyTool"],
+                "CodeExecutionAgent": ["OpenInterpreterExecutionTool", "FileLinterTool", "StaticAnalysisTool", "DockerfileValidatorTool"],
+                "GCPCloudAgent": ["CreateStorageBucketTool", "DeployToCloudRunTool"],
+                "AzureCloudAgent": ["BuildImageACRTool", "DeployToAzureFunctionsTool"],
+                "QualityAssuranceAgent": ["PytestExecutionTool", "APITestClientTool"]
+              }
+            },
+            "inter_agent_communication": {
+              "context_passing": "Utilize CrewAI native mechanisms for context and data exchange",
+              "pydantic_models": "Implement models for Task expected_output and Tool inputs/outputs",
+              "artifact_handling": "Large artifacts saved to shared location with URI/path passing via CrewAI context",
+              "memory_integration": "MemoryManager.py (Qdrant) stores metadata and references"
+            }
+          }
+        },
+
+
+        "phase_2_frontend_ui": {
+          "priority_level": "HIGH",
+          "description": "Finalization for CrewAI visualization and user experience targeting non-technical users",
+          "key_components": {
+            "crewai_visualization_components": {
+              "GlobalCrewOverviewPanel": "Display active Crew ID, overall status, and Agent list with statuses",
+              "DetailedAgentInteractionPanel": {
+                "agent_information": "Show agent name, role, current CrewAI Task description",
+                "state_indicators": ["IDLE", "THINKING/PLANNING", "USING_TOOL", "WAITING_FOR_DATA", "TASK_COMPLETED", "ERROR_IN_TASK"],
+                "task_visualization": "Visualize task handoffs and transitions",
+                "output_display": "Agent-specific outputs, artifacts with syntax highlighting, previews, copy options",
+                "log_stream": "Agent-specific, filterable log stream"
+              },
+              "TaskFlowVisualizationPanel": "Dynamic visual representation (DAG/timeline) of CrewAI Tasks, dependencies, and real-time progress"
+            },
+            "websocket_communication": {
+              "enhanced_message_types": [
+                "CrewKickoffMessage",
+                "TaskStartMessage",
+                "AgentToolUsageMessage",
+                "AgentLogMessage"
+              ],
+              "frontend_handling": "Robust parsing and dynamic updates of UI components",
+              "semantic_logging": "Color-coding by agent/severity, optional plain English log stream, contextual links"
+            },
+            "gemini_analysis_integration": {
+              "client_side_refinement": "Present Gemini suggestions for direct user edit/acceptance",
+              "backend_confirmation": "Display System's Understanding of Your Goal for final user confirmation"
+            },
+            "user_centric_design": {
+              "target_audience": "Non-technical users",
+              "guided_input": "Improve GoalInputPanel.tsx with examples, tooltips, wizard-style flow",
+              "visual_consistency": "Clear, intuitive iconography and visual cues",
+              "error_messaging": "User-friendly error messages with actionable next steps",
+              "process_demystification": "Make agent activities and decisions understandable, avoid technical jargon"
+            },
+            "code_quality_cleanup": {
+              "frontend_consolidation": "Ensure frontend/src/ is canonical, remove duplicates",
+              "css_theme": "Resolve CSS redundancies, ensure consistent Deep Space Gemstone theme"
+            }
+          }
+        },
+
+
+        "phase_3_feature_parity": {
+          "priority_level": "MEDIUM-HIGH",
+          "description": "System-wide enhancements and full feature implementation",
+          "key_components": {
+            "azure_cloud_support": {
+              "azure_cloud_agent": "Implement with all necessary CrewAI Tools for Azure Blob Storage, ACR, Azure App Service/Functions",
+              "infrastructure_as_code": "CodeExecutionAgent generates Azure-specific IaC (Terraform HCL) via OI with validation",
+              "ui_integration": "Update UI for Azure target selection and Azure-specific artifacts/progress display"
+            },
+            "persistent_memory_qdrant": {
+              "rag_capabilities": "Robust RAG for PlannerAgent (planning patterns) and CodeExecutionAgent (code snippets, best practices)",
+              "metadata_storage": "Comprehensive metadata storage with all Qdrant vectors",
+              "data_persistence": "Store project history, user preferences, error/resolution patterns",
+              "ui_features": "Browse relevant project_history or learned_patterns"
+            },
+            "open_interpreter_integration": {
+              "service_formalization": "Robust service wrapped by CrewAI Tools for CodeExecutionAgent",
+              "validation_pipeline": "Multi-stage validation and self-correction loop (linting, static analysis, dry-runs)",
+              "ui_visibility": "Make validation process visible in UI logs",
+              "prompt_engineering": "Dynamic and contextual prompt engineering for OI"
+            },
+            "system_resilience": {
+              "logging": "Centralized, structured JSON logging throughout backend",
+              "exception_handling": "Hierarchy of custom exceptions",
+              "retry_logic": "Integrate tenacity for robust, configurable retries on critical external API calls",
+              "idempotency": "Ensure critical operations are idempotent"
+            },
+            "security_hardening": {
+              "input_sanitization": "Rigorous sanitization for all API inputs and prompts",
+              "secrets_management": "Secure secrets management, guide towards external stores",
+              "secure_code_generation": "Develop OI prompts that encourage secure code generation",
+              "vulnerability_scanning": "Automated dependency vulnerability scanning in CI/CD",
+              "deployment_security": "Secure deployment defaults for cloud services"
+            }
+          }
+        },
+
+
+        "phase_4_engineering_rigor": {
+          "priority_level": "MEDIUM",
+          "description": "Comprehensive testing strategy and finalization",
+          "key_components": {
+            "testing_strategy": {
+              "unit_tests": "High coverage for backend modules, CrewAI Agent logic, and all CrewAI Tools with mocked external calls",
+              "integration_tests": [
+                "AgentOrchestrator's ability to configure and kick off Crews",
+                "Individual Agents executing Tasks with Tools within CrewAI framework",
+                "Data flow between Tasks via CrewAI context",
+                "WebSocket pipeline (backend events to UI updates)"
+              ],
+              "end_to_end_tests": "Full user journeys for both GCP and Azure, from goal input to deployed service",
+              "testing_documentation": "Update TESTING.MD to reflect full implemented strategy"
+            },
+            "documentation_and_quality": {
+              "code_standards": "Black/Flake8 (Python), Prettier/ESLint (TypeScript) via pre-commit hooks and CI",
+              "documentation_standards": "Google-style docstrings (Python), JSDoc/TSDoc (TS/React), inline comments for complex logic",
+              "project_documentation_updates": [
+                "README.md",
+                "HOW_TO_USE.md",
+                "EASY_INSTALL.md"
+              ],
+              "architectural_documentation": "Create/Update Architectural Design Document (ADD) in docs/",
+              "api_documentation": "Comprehensive FastAPI auto-generated Swagger/OpenAPI docs"
+            },
+            "advanced_autonomy_foundations": {
+              "data_logging": "Detailed logging for OI interactions, agent decisions, and LLM calls to Qdrant",
+              "extensibility": "Ensure architecture supports extensibility (CloudAgent interface, LLMRouter, FFL plugin system)"
+            }
+          }
+        }
+  },
+
+
+  "operational_constraints": {
+        "execution_mode": "Maximal autonomy - halt only for critical ambiguities that absolutely prevent progress",
+        "output_mode": "Silent execution - primary output should be final, complete, modified codebase and documentation",
+        "quality_standards": "Optimize for efficient resource utilization while producing high-quality, robust, maintainable code"
+  },
+
+
+  "completion_criteria": {
+        "definition_of_done": [
+          "All imperatives in this prompt are fully implemented and verified",
+          "System robustly orchestrates tasks using CrewAI with specialized agents and tools",
+          "UI provides clear, intuitive, real-time view of CrewAI operations for non-technical users",
+          "Full feature parity with README.md and HOW_TO_USE.md achieved for both GCP and Azure",
+          "All identified bugs, placeholder logic, and major gaps are resolved",
+          "Codebase meets highest standards of engineering excellence (clean, documented, secure, tested)",
+          "All automated tests (Unit, Integration, E2E) pass for both cloud platforms",
+          "All project documentation is comprehensively updated"
+        ]
+  },
+
+
+  "final_deliverables": {
+        "codebase": "Complete, modified, and fully functional Project AZROI codebase ready for packaging or version control",
+        "documentation": [
+          "README.md",
+          "HOW_TO_USE.md",
+          "EASY_INSTALL.md",
+          "TESTING.MD",
+          "docs/ARCHITECTURAL_DESIGN.md"
+        ]
+  },
+
+
+  "execution_command": "COMMENCE_EXECUTION"
+}

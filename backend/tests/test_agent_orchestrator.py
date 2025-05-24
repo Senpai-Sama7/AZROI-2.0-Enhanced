@@ -1,14 +1,19 @@
+"""
+Unit tests for the enhanced agent orchestrator
+"""
 import pytest
-from backend.core_orchestration.agent_orchestrator import AgentOrchestrator
-from backend.agents.file_manager_agent import FileManagerAgent
-from backend.agents.notification_agent import NotificationAgent
-from backend.agents.scheduler_agent import SchedulerAgent
-from backend.agents.cognitive_monitor_agent import CognitiveMonitorAgent
+import asyncio
+from unittest.mock import Mock, AsyncMock, patch
+from datetime import datetime, timezone
 
-# Mock our dependencies for testing
-class DummyLLMRouter:
-    async def generate(self, *args, **kwargs):
-        return '[{"id": "1", "title": "Test", "description": "Test file operation", "dependencies": [], "complexity": "Low"}]'
+from backend.core_orchestration.agent_orchestrator_enhanced import (
+    EnhancedAgentOrchestrator,
+    AgentType,
+    TaskPriority,
+    CrewTask,
+    AgentInstance,
+    CrewSession
+)
 
 class DummyMemoryManager:
     pass

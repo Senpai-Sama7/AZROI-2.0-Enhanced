@@ -21,7 +21,6 @@ try:
     from crewai.agent import Agent as CrewAIAgent
     from crewai.task import Task as CrewAITask
     from crewai.crew import Crew as CrewAICrew
-    from langchain_openai import ChatOpenAI
     CREWAI_AVAILABLE = True
 except ImportError as e:
     CREWAI_AVAILABLE = False
@@ -330,10 +329,6 @@ class EnhancedAgentOrchestrator:
             AgentType.QUALITY_ASSURANCE: ["quality_assurance"],
         }
         return tools_map.get(agent_type, [])
-            
-        except Exception as e:
-            logger.error(f"Failed to create agent instance {agent_type.value}: {e}")
-            raise
 
     async def _create_enhanced_crew_agent(self, agent_type: AgentType, goal_context: str, tools: List[str]) -> Any:
         """Create an enhanced CrewAI agent for the specified type with tools"""
@@ -454,6 +449,8 @@ class EnhancedAgentOrchestrator:
                          description: str, 
                          agent_type: AgentType,
                          dependencies: Optional[List[str]] = None,
+                         priority: TaskPriority = TaskPriority.MEDIUM,
+                         expected_output: str = "",
                          metadata: Optional[Dict[str, Any]] = None) -> CrewTask:
         """Create a new task for execution"""
         
@@ -463,13 +460,143 @@ class EnhancedAgentOrchestrator:
             description=description,
             agent_type=agent_type,
             dependencies=dependencies or [],
+            priority=priority,
+            expected_output=expected_output,
             metadata=metadata or {}
         )
         
         self.task_queue.append(task)
+        self.execution_metrics["total_tasks"] += 1
         logger.info(f"Created task: {title} ({task.id})")
         
         return task
+
+    async def create_crew_session(self, 
+                                name: str, 
+                                description: str, 
+                                agent_types: List[AgentType],
+                                process_type: str = "sequential") -> CrewSession:
+        """Create a new crew session for coordinated multi-agent workflows"""
+        try:
+            session_id = str(uuid.uuid4())
+            
+            # Create agent instances for the session
+            agents = []
+            for agent_type in agent_types:
+                agent = await self.create_agent_instance(agent_type)
+                agents.append(agent)
+            
+            session = CrewSession(
+                id=session_id,
+                name=name,
+                description=description,
+                agents=agents,
+                tasks=[],
+                process_type=process_type,
+                status="created"
+            )
+            
+            self.crew_sessions[session_id] = session
+            logger.info(f"Created crew session: {name} ({session_id})")
+            await self._emit_event("crew_session_created", {"session_id": session_id, "name": name})
+            
+            return session
+            
+        except Exception as e:
+            logger.error(f"Failed to create crew session: {e}")
+            raise
+
+    async def execute_crew_session(self, session_id: str) -> AsyncGenerator[Dict[str, Any], None]:
+        """Execute a crew session with coordinated agents"""
+        if session_id not in self.crew_sessions:
+            raise ValueError(f"Crew session not found: {session_id}")
+        
+        session = self.crew_sessions[session_id]
+        
+        async with self._crew_lock:
+            try:
+                session.status = "running"
+                session.started_at = datetime.utcnow().isoformat()
+                
+                yield {
+                    "type": "crew_session_update",
+                    "session_id": session_id,
+                    "status": "running",
+                    "message": f"Starting crew session: {session.name}"
+                }
+                
+                if CREWAI_AVAILABLE and session.tasks:
+                    # Create CrewAI crew and tasks
+                    crew_agents = [agent.crew_agent for agent in session.agents if agent.crew_agent]
+                    crew_tasks = []
+                    
+                    for task in session.tasks:
+                        # Find the appropriate agent for this task
+                        task_agent = next(
+                            (agent.crew_agent for agent in session.agents 
+                             if agent.agent_type == task.agent_type and agent.crew_agent), 
+                            None
+                        )
+                        
+                        if task_agent:
+                            crew_task = Task(
+                                description=task.description,
+                                agent=task_agent,
+                                expected_output=task.expected_output or "Completed task output"
+                            )
+                            crew_tasks.append(crew_task)
+                    
+                    if crew_agents and crew_tasks:
+                        # Create and execute the crew
+                        crew = Crew(
+                            agents=crew_agents,
+                            tasks=crew_tasks,
+                            process=Process.sequential if session.process_type == "sequential" else Process.hierarchical,
+                            verbose=True
+                        )
+                        
+                        session.crew = crew
+                        
+                        # Execute the crew asynchronously
+                        result = await asyncio.get_event_loop().run_in_executor(
+                            self.executor, crew.kickoff
+                        )
+                        
+                        session.results["crew_output"] = str(result)
+                        
+                        yield {
+                            "type": "crew_session_output",
+                            "session_id": session_id,
+                            "output": str(result)
+                        }
+                
+                # Update session completion
+                session.status = "completed"
+                session.completed_at = datetime.utcnow().isoformat()
+                
+                yield {
+                    "type": "crew_session_update",
+                    "session_id": session_id,
+                    "status": "completed",
+                    "message": f"Crew session completed: {session.name}"
+                }
+                
+                logger.info(f"Crew session completed: {session_id}")
+                await self._emit_event("crew_session_completed", {"session_id": session_id})
+                
+            except Exception as e:
+                session.status = "failed"
+                error_msg = f"Crew session failed: {str(e)}"
+                logger.error(error_msg)
+                
+                yield {
+                    "type": "crew_session_update",
+                    "session_id": session_id,
+                    "status": "failed",
+                    "error": error_msg
+                }
+                
+                await self._emit_event("crew_session_failed", {"session_id": session_id, "error": error_msg})
 
     async def process_goal_with_crewai(self, goal_text: str, goal_id: str) -> AsyncGenerator[Dict[str, Any], None]:
         """Process a goal using CrewAI orchestration"""
@@ -844,101 +971,14 @@ class EnhancedAgentOrchestrator:
                 "status": "analyzing"
             }
             
-            # Create planning agent
-            planner_agent = Agent(
-                id=str(uuid.uuid4()),
-                name="Planner Agent",
-                type="planner",
-                status="active",
-                task=f"Analyzing goal: {goal_text}",
-                created_at=datetime.utcnow().isoformat(),
-                updated_at=datetime.utcnow().isoformat()
-            )
-            
-            self.active_agents[planner_agent.id] = planner_agent
-            
-            yield {
-                "type": "agent_update",
-                "data": {
-                    "agent": {
-                        "id": planner_agent.id,
-                        "name": planner_agent.name,
-                        "type": planner_agent.type,
-                        "status": planner_agent.status,
-                        "task": planner_agent.task,
-                        "progress": planner_agent.progress,
-                        "created_at": planner_agent.created_at,
-                        "updated_at": planner_agent.updated_at
-                    }
-                }
-            }
-            
-            # Simulate planning phase
-            await asyncio.sleep(1)
-            planner_agent.progress = 0.5
-            planner_agent.updated_at = datetime.utcnow().isoformat()
-            
-            yield {
-                "type": "agent_update",
-                "data": {
-                    "agent": {
-                        "id": planner_agent.id,
-                        "name": planner_agent.name,
-                        "type": planner_agent.type,
-                        "status": planner_agent.status,
-                        "task": planner_agent.task,
-                        "progress": planner_agent.progress,
-                        "created_at": planner_agent.created_at,
-                        "updated_at": planner_agent.updated_at
-                    }
-                }
-            }
-            
-            # Generate output
-            yield {
-                "type": "output_update",
-                "data": {
-                    "output": {
-                        "id": str(uuid.uuid4()),
-                        "goalId": goal_id,
-                        "type": "analysis",
-                        "title": "Goal Analysis Complete",
-                        "content": f"Successfully analyzed goal: {goal_text}",
-                        "timestamp": datetime.utcnow().isoformat(),
-                        "agent_id": planner_agent.id
-                    }
-                }
-            }
-            
-            # Complete planning
-            planner_agent.progress = 1.0
-            planner_agent.status = "completed"
-            planner_agent.updated_at = datetime.utcnow().isoformat()
-            
-            yield {
-                "type": "agent_update",
-                "data": {
-                    "agent": {
-                        "id": planner_agent.id,
-                        "name": planner_agent.name,
-                        "type": planner_agent.type,
-                        "status": planner_agent.status,
-                        "task": planner_agent.task,
-                        "progress": planner_agent.progress,
-                        "created_at": planner_agent.created_at,
-                        "updated_at": planner_agent.updated_at
-                    }
-                }
-            }
-            
-            # Final status update
-            yield {
-                "type": "goal_update",
-                "goal_id": goal_id,
-                "status": "completed"
-            }
-            
-            logger.info(f"Goal processing completed: {goal_id}")
+            # Use enhanced CrewAI processing if available
+            if CREWAI_AVAILABLE:
+                async for update in self.process_goal_with_crewai(goal_text, goal_id):
+                    yield update
+            else:
+                # Fallback to basic processing
+                async for update in self._process_goal_basic(goal_text, goal_id):
+                    yield update
             
         except Exception as e:
             logger.error(f"Goal processing failed for {goal_id}: {e}")
@@ -948,171 +988,103 @@ class EnhancedAgentOrchestrator:
                 "status": "error",
                 "error": str(e)
             }
-    
-    async def get_active_agents(self) -> List[Dict[str, Any]]:
-        """Get list of active agents"""
-        return [
-            {
-                "id": agent.id,
-                "name": agent.name,
-                "type": agent.type,
-                "status": agent.status,
-                "task": agent.task,
-                "progress": agent.progress,
-                "created_at": agent.created_at,
-                "updated_at": agent.updated_at
+
+    async def _process_goal_basic(self, goal_text: str, goal_id: str) -> AsyncGenerator[Dict[str, Any], None]:
+        """Basic goal processing fallback"""
+        # Create planning agent
+        planner_agent = Agent(
+            id=str(uuid.uuid4()),
+            name="Planner Agent",
+            type="planner",
+            status="active",
+            task=f"Analyzing goal: {goal_text}",
+            created_at=datetime.utcnow().isoformat(),
+            updated_at=datetime.utcnow().isoformat()
+        )
+        
+        self.active_agents[planner_agent.id] = planner_agent
+        
+        yield {
+            "type": "agent_update",
+            "data": {
+                "agent": {
+                    "id": planner_agent.id,
+                    "name": planner_agent.name,
+                    "type": planner_agent.type,
+                    "status": planner_agent.status,
+                    "task": planner_agent.task,
+                    "progress": planner_agent.progress,
+                    "created_at": planner_agent.created_at,
+                    "updated_at": planner_agent.updated_at
+                }
             }
-            for agent in self.active_agents.values()
-        ]
-    
-    async def stop_agent(self, agent_id: str) -> bool:
-        """Stop a specific agent"""
-        if agent_id in self.active_agents:
-            agent = self.active_agents[agent_id]
-            agent.status = "stopped"
-            agent.updated_at = datetime.utcnow().isoformat()
-            logger.info(f"Agent stopped: {agent_id}")
-            return True
-        return False
-    
-    async def cleanup_completed_agents(self):
-        """Remove completed agents from active list"""
-        completed_agents = [
-            agent_id for agent_id, agent in self.active_agents.items()
-            if agent.status in ["completed", "stopped", "error"]
-        ]
+        }
         
-        for agent_id in completed_agents:
-            del self.active_agents[agent_id]
-            logger.debug(f"Cleaned up completed agent: {agent_id}")
-    
-    async def create_crew_session(self, 
-                                name: str, 
-                                description: str, 
-                                agent_types: List[AgentType],
-                                process_type: str = "sequential") -> CrewSession:
-        """Create a new crew session for coordinated multi-agent workflows"""
-        try:
-            session_id = str(uuid.uuid4())
-            
-            # Create agent instances for the session
-            agents = []
-            for agent_type in agent_types:
-                agent = await self.create_agent_instance(agent_type)
-                agents.append(agent)
-            
-            session = CrewSession(
-                id=session_id,
-                name=name,
-                description=description,
-                agents=agents,
-                tasks=[],
-                process_type=process_type,
-                status="created"
-            )
-            
-            self.crew_sessions[session_id] = session
-            logger.info(f"Created crew session: {name} ({session_id})")
-            await self._emit_event("crew_session_created", {"session_id": session_id, "name": name})
-            
-            return session
-            
-        except Exception as e:
-            logger.error(f"Failed to create crew session: {e}")
-            raise
-    
-    async def execute_crew_session(self, session_id: str) -> AsyncGenerator[Dict[str, Any], None]:
-        """Execute a crew session with coordinated agents"""
-        if session_id not in self.crew_sessions:
-            raise ValueError(f"Crew session not found: {session_id}")
+        # Simulate planning phase
+        await asyncio.sleep(1)
+        planner_agent.progress = 0.5
+        planner_agent.updated_at = datetime.utcnow().isoformat()
         
-        session = self.crew_sessions[session_id]
+        yield {
+            "type": "agent_update",
+            "data": {
+                "agent": {
+                    "id": planner_agent.id,
+                    "name": planner_agent.name,
+                    "type": planner_agent.type,
+                    "status": planner_agent.status,
+                    "task": planner_agent.task,
+                    "progress": planner_agent.progress,
+                    "created_at": planner_agent.created_at,
+                    "updated_at": planner_agent.updated_at
+                }
+            }
+        }
         
-        async with self._crew_lock:
-            try:
-                session.status = "running"
-                session.started_at = datetime.utcnow().isoformat()
-                
-                yield {
-                    "type": "crew_session_update",
-                    "session_id": session_id,
-                    "status": "running",
-                    "message": f"Starting crew session: {session.name}"
+        # Generate output
+        yield {
+            "type": "output_update",
+            "data": {
+                "output": {
+                    "id": str(uuid.uuid4()),
+                    "goalId": goal_id,
+                    "type": "analysis",
+                    "title": "Goal Analysis Complete",
+                    "content": f"Successfully analyzed goal: {goal_text}",
+                    "timestamp": datetime.utcnow().isoformat(),
+                    "agent_id": planner_agent.id
                 }
-                
-                if CREWAI_AVAILABLE and session.tasks:
-                    # Create CrewAI crew and tasks
-                    crew_agents = [agent.crew_agent for agent in session.agents if agent.crew_agent]
-                    crew_tasks = []
-                    
-                    for task in session.tasks:
-                        # Find the appropriate agent for this task
-                        task_agent = next(
-                            (agent.crew_agent for agent in session.agents 
-                             if agent.agent_type == task.agent_type and agent.crew_agent), 
-                            None
-                        )
-                        
-                        if task_agent:
-                            crew_task = Task(
-                                description=task.description,
-                                agent=task_agent,
-                                expected_output=task.expected_output or "Completed task output"
-                            )
-                            crew_tasks.append(crew_task)
-                    
-                    if crew_agents and crew_tasks:
-                        # Create and execute the crew
-                        crew = Crew(
-                            agents=crew_agents,
-                            tasks=crew_tasks,
-                            process=Process.sequential if session.process_type == "sequential" else Process.hierarchical,
-                            verbose=True
-                        )
-                        
-                        session.crew = crew
-                        
-                        # Execute the crew asynchronously
-                        result = await asyncio.get_event_loop().run_in_executor(
-                            self.executor, crew.kickoff
-                        )
-                        
-                        session.results["crew_output"] = str(result)
-                        
-                        yield {
-                            "type": "crew_session_output",
-                            "session_id": session_id,
-                            "output": str(result)
-                        }
-                
-                # Update session completion
-                session.status = "completed"
-                session.completed_at = datetime.utcnow().isoformat()
-                
-                yield {
-                    "type": "crew_session_update",
-                    "session_id": session_id,
-                    "status": "completed",
-                    "message": f"Crew session completed: {session.name}"
+            }
+        }
+        
+        # Complete planning
+        planner_agent.progress = 1.0
+        planner_agent.status = "completed"
+        planner_agent.updated_at = datetime.utcnow().isoformat()
+        
+        yield {
+            "type": "agent_update",
+            "data": {
+                "agent": {
+                    "id": planner_agent.id,
+                    "name": planner_agent.name,
+                    "type": planner_agent.type,
+                    "status": planner_agent.status,
+                    "task": planner_agent.task,
+                    "progress": planner_agent.progress,
+                    "created_at": planner_agent.created_at,
+                    "updated_at": planner_agent.updated_at
                 }
-                
-                logger.info(f"Crew session completed: {session_id}")
-                await self._emit_event("crew_session_completed", {"session_id": session_id})
-                
-            except Exception as e:
-                session.status = "failed"
-                error_msg = f"Crew session failed: {str(e)}"
-                logger.error(error_msg)
-                
-                yield {
-                    "type": "crew_session_update",
-                    "session_id": session_id,
-                    "status": "failed",
-                    "error": error_msg
-                }
-                
-                await self._emit_event("crew_session_failed", {"session_id": session_id, "error": error_msg})
-    
+            }
+        }
+        
+        # Final status update
+        yield {
+            "type": "goal_update",
+            "goal_id": goal_id,
+            "status": "completed"
+        }
+
     async def add_task_to_session(self, session_id: str, task: CrewTask) -> bool:
         """Add a task to an existing crew session"""
         if session_id not in self.crew_sessions:
@@ -1162,6 +1134,32 @@ class EnhancedAgentOrchestrator:
             self.event_callbacks[event_type] = []
         self.event_callbacks[event_type].append(callback)
     
+    async def get_active_agents(self) -> List[Dict[str, Any]]:
+        """Get list of active agents"""
+        return [
+            {
+                "id": agent.id,
+                "name": agent.name,
+                "type": agent.type,
+                "status": agent.status,
+                "task": agent.task,
+                "progress": agent.progress,
+                "created_at": agent.created_at,
+                "updated_at": agent.updated_at
+            }
+            for agent in self.active_agents.values()
+        ]
+    
+    async def stop_agent(self, agent_id: str) -> bool:
+        """Stop a specific agent"""
+        if agent_id in self.active_agents:
+            agent = self.active_agents[agent_id]
+            agent.status = "stopped"
+            agent.updated_at = datetime.utcnow().isoformat()
+            logger.info(f"Agent stopped: {agent_id}")
+            return True
+        return False
+    
     async def get_execution_metrics(self) -> Dict[str, Any]:
         """Get comprehensive execution metrics"""
         return {
@@ -1172,54 +1170,417 @@ class EnhancedAgentOrchestrator:
             "queue_size": len(self.task_queue)
         }
     
-    async def cleanup_resources(self) -> None:
-        """Clean up completed sessions and unused resources"""
-        try:
-            # Clean up completed sessions older than 1 hour
-            cutoff_time = datetime.utcnow() - timedelta(hours=1)
+    # Agent management methods for API compatibility
+    async def get_agent(self, agent_id: str) -> Optional[Dict[str, Any]]:
+        """Get details of a specific agent"""
+        if agent_id in self.agent_instances:
+            agent = self.agent_instances[agent_id]
+            return {
+                "id": agent.id,
+                "name": agent.name,
+                "type": agent.agent_type.value,
+                "status": agent.status,
+                "capabilities": agent.capabilities,
+                "tools": agent.tools,
+                "created_at": agent.created_at,
+                "updated_at": agent.updated_at
+            }
+        
+        # Check legacy active agents
+        if agent_id in self.active_agents:
+            agent = self.active_agents[agent_id]
+            return {
+                "id": agent.id,
+                "name": agent.name,
+                "type": agent.type,
+                "status": agent.status,
+                "task": agent.task,
+                "progress": agent.progress,
+                "created_at": agent.created_at,
+                "updated_at": agent.updated_at
+            }
+        
+        return None
+
+    async def pause_agent(self, agent_id: str) -> bool:
+        """Pause a specific agent"""
+        if agent_id in self.agent_instances:
+            agent = self.agent_instances[agent_id]
+            if agent.status in ["ready", "active"]:
+                agent.status = "paused"
+                agent.updated_at = datetime.utcnow().isoformat()
+                logger.info(f"Agent paused: {agent_id}")
+                return True
+        
+        # Check legacy active agents
+        if agent_id in self.active_agents:
+            agent = self.active_agents[agent_id]
+            if agent.status in ["ready", "active"]:
+                agent.status = "paused"
+                agent.updated_at = datetime.utcnow().isoformat()
+                logger.info(f"Legacy agent paused: {agent_id}")
+                return True
+        
+        return False
+
+    async def resume_agent(self, agent_id: str) -> bool:
+        """Resume a paused agent"""
+        if agent_id in self.agent_instances:
+            agent = self.agent_instances[agent_id]
+            if agent.status == "paused":
+                agent.status = "ready"
+                agent.updated_at = datetime.utcnow().isoformat()
+                logger.info(f"Agent resumed: {agent_id}")
+                return True
+        
+        # Check legacy active agents
+        if agent_id in self.active_agents:
+            agent = self.active_agents[agent_id]
+            if agent.status == "paused":
+                agent.status = "active"
+                agent.updated_at = datetime.utcnow().isoformat()
+                logger.info(f"Legacy agent resumed: {agent_id}")
+                return True
+        
+        return False
+
+    async def reset_agent(self, agent_id: str) -> bool:
+        """Reset an agent to initial state"""
+        if agent_id in self.agent_instances:
+            agent = self.agent_instances[agent_id]
+            agent.status = "ready"
+            agent.updated_at = datetime.utcnow().isoformat()
             
-            sessions_to_remove = []
-            for session_id, session in self.crew_sessions.items():
-                if session.status in ["completed", "failed"] and session.completed_at:
-                    completed_time = datetime.fromisoformat(session.completed_at.replace('Z', '+00:00'))
-                    if completed_time < cutoff_time:
-                        sessions_to_remove.append(session_id)
+            # Reset metrics for this agent
+            if agent_id in self.execution_metrics["agent_utilization"]:
+                self.execution_metrics["agent_utilization"][agent_id].update({
+                    "tasks_completed": 0,
+                    "total_execution_time": 0.0,
+                    "success_rate": 1.0,
+                    "average_task_time": 0.0
+                })
             
-            for session_id in sessions_to_remove:
-                del self.crew_sessions[session_id]
-                logger.debug(f"Cleaned up old session: {session_id}")
+            logger.info(f"Agent reset: {agent_id}")
+            return True
+        
+        # Check legacy active agents
+        if agent_id in self.active_agents:
+            agent = self.active_agents[agent_id]
+            agent.status = "ready"
+            agent.progress = 0.0
+            agent.task = ""
+            agent.updated_at = datetime.utcnow().isoformat()
+            logger.info(f"Legacy agent reset: {agent_id}")
+            return True
+        
+        return False
+
+    # Task management methods for API compatibility
+    async def get_task(self, task_id: str) -> Optional[Dict[str, Any]]:
+        """Get details of a specific task"""
+        # Check task queue
+        for task in self.task_queue:
+            if task.id == task_id:
+                return {
+                    "id": task.id,
+                    "title": task.title,
+                    "description": task.description,
+                    "agent_type": task.agent_type.value,
+                    "status": task.status.value,
+                    "priority": task.priority.value,
+                    "progress": task.progress,
+                    "dependencies": task.dependencies,
+                    "expected_output": task.expected_output,
+                    "created_at": task.created_at,
+                    "updated_at": task.updated_at,
+                    "metadata": task.metadata
+                }
+        
+        # Check completed tasks
+        if task_id in self.completed_tasks:
+            task = self.completed_tasks[task_id]
+            return {
+                "id": task.id,
+                "title": task.title,
+                "description": task.description,
+                "agent_type": task.agent_type.value,
+                "status": task.status.value,
+                "priority": task.priority.value,
+                "progress": task.progress,
+                "dependencies": task.dependencies,
+                "expected_output": task.expected_output,
+                "created_at": task.created_at,
+                "updated_at": task.updated_at,
+                "completed_at": task.completed_at,
+                "result": task.result,
+                "metadata": task.metadata
+            }
+        
+        # Check failed tasks
+        if task_id in self.failed_tasks:
+            task = self.failed_tasks[task_id]
+            return {
+                "id": task.id,
+                "title": task.title,
+                "description": task.description,
+                "agent_type": task.agent_type.value,
+                "status": task.status.value,
+                "priority": task.priority.value,
+                "progress": task.progress,
+                "dependencies": task.dependencies,
+                "expected_output": task.expected_output,
+                "created_at": task.created_at,
+                "updated_at": task.updated_at,
+                "error": task.error,
+                "metadata": task.metadata
+            }
+        
+        return None
+
+    async def retry_task(self, task_id: str) -> bool:
+        """Retry a failed task"""
+        if task_id in self.failed_tasks:
+            task = self.failed_tasks[task_id]
             
-            # Clean up completed tasks
-            self.completed_tasks = {k: v for k, v in self.completed_tasks.items() 
-                                  if datetime.fromisoformat(v.completed_at or v.updated_at) > cutoff_time}
+            # Move from failed to queue and reset status
+            task.status = TaskStatus.PENDING
+            task.progress = 0.0
+            task.error = ""
+            task.updated_at = datetime.utcnow().isoformat()
             
-            # Clean up failed tasks older than 24 hours
-            day_cutoff = datetime.utcnow() - timedelta(hours=24)
-            self.failed_tasks = {k: v for k, v in self.failed_tasks.items() 
-                               if datetime.fromisoformat(v.updated_at) > day_cutoff}
+            # Move back to task queue
+            self.task_queue.append(task)
+            del self.failed_tasks[task_id]
             
-            logger.info("Resource cleanup completed")
-            
-        except Exception as e:
-            logger.error(f"Resource cleanup failed: {e}")
+            logger.info(f"Task queued for retry: {task_id}")
+            return True
+        
+        return False
+
+    async def skip_task(self, task_id: str) -> bool:
+        """Skip a task"""
+        # Find task in queue
+        for i, task in enumerate(self.task_queue):
+            if task.id == task_id:
+                task.status = TaskStatus.CANCELLED
+                task.updated_at = datetime.utcnow().isoformat()
+                task.result = "Task skipped by user"
+                
+                # Move to completed tasks as cancelled
+                self.completed_tasks[task_id] = task
+                self.task_queue.pop(i)
+                
+                logger.info(f"Task skipped: {task_id}")
+                return True
+        
+        return False
+
+    async def prioritize_task(self, task_id: str) -> bool:
+        """Prioritize a task by moving it to front of queue"""
+        for i, task in enumerate(self.task_queue):
+            if task.id == task_id:
+                # Move task to front of queue
+                prioritized_task = self.task_queue.pop(i)
+                prioritized_task.priority = TaskPriority.CRITICAL
+                prioritized_task.updated_at = datetime.utcnow().isoformat()
+                self.task_queue.insert(0, prioritized_task)
+                
+                logger.info(f"Task prioritized: {task_id}")
+                return True
+        
+        return False
+
+    async def get_task_execution(self, execution_id: str) -> Optional[Dict[str, Any]]:
+        """Get details of a task execution (fallback implementation)"""
+        # For now, use task_id as execution_id
+        task_data = await self.get_task(execution_id)
+        if task_data:
+            return {
+                "execution_id": execution_id,
+                "task_id": execution_id,
+                "status": task_data["status"],
+                "started_at": task_data.get("created_at"),
+                "completed_at": task_data.get("completed_at"),
+                "result": task_data.get("result"),
+                "error": task_data.get("error"),
+                "progress": task_data["progress"]
+            }
+        
+        return None
+
+    # Session management methods for API compatibility
+    async def pause_crew_session(self, session_id: str) -> bool:
+        """Pause a crew session"""
+        if session_id not in self.crew_sessions:
+            return False
+        
+        session = self.crew_sessions[session_id]
+        if session.status == "running":
+            session.status = "paused"
+            logger.info(f"Crew session paused: {session_id}")
+            return True
+        
+        return False
+
+    async def stop_crew_session(self, session_id: str) -> bool:
+        """Stop a crew session"""
+        if session_id not in self.crew_sessions:
+            return False
+        
+        session = self.crew_sessions[session_id]
+        if session.status in ["running", "paused"]:
+            session.status = "stopped"
+            session.completed_at = datetime.utcnow().isoformat()
+            logger.info(f"Crew session stopped: {session_id}")
+            return True
+        
+        return False
+
+    async def get_session_metrics(self, session_id: str) -> Optional[Dict[str, Any]]:
+        """Get metrics for a crew session"""
+        if session_id not in self.crew_sessions:
+            return None
+        
+        session = self.crew_sessions[session_id]
+        
+        # Calculate basic metrics
+        total_tasks = len(session.tasks)
+        completed_tasks = sum(1 for task in session.tasks if task.status == TaskStatus.COMPLETED)
+        failed_tasks = sum(1 for task in session.tasks if task.status == TaskStatus.FAILED)
+        
+        start_time = datetime.fromisoformat(session.started_at) if session.started_at else datetime.utcnow()
+        current_time = datetime.utcnow()
+        if session.completed_at:
+            end_time = datetime.fromisoformat(session.completed_at)
+            duration = (end_time - start_time).total_seconds()
+        else:
+            duration = (current_time - start_time).total_seconds()
+        
+        return {
+            "session_id": session_id,
+            "total_tasks": total_tasks,
+            "completed_tasks": completed_tasks,
+            "failed_tasks": failed_tasks,
+            "pending_tasks": total_tasks - completed_tasks - failed_tasks,
+            "success_rate": completed_tasks / max(1, completed_tasks + failed_tasks),
+            "duration_seconds": duration,
+            "agent_count": len(session.agents),
+            "status": session.status
+        }
+
+    async def get_session_collaborations(self, session_id: str) -> Optional[Dict[str, Any]]:
+        """Get collaboration data for a crew session"""
+        if session_id not in self.crew_sessions:
+            return None
+        
+        session = self.crew_sessions[session_id]
+        
+        # Generate collaboration data based on agent interactions
+        collaborations = []
+        for i, agent1 in enumerate(session.agents):
+            for j, agent2 in enumerate(session.agents[i+1:], i+1):
+                # Find tasks that might involve collaboration
+                shared_tasks = [
+                    task for task in session.tasks 
+                    if task.agent_type in [agent1.agent_type, agent2.agent_type]
+                ]
+                
+                if shared_tasks:
+                    collaborations.append({
+                        "agent1_id": agent1.id,
+                        "agent1_type": agent1.agent_type.value,
+                        "agent2_id": agent2.id,
+                        "agent2_type": agent2.agent_type.value,
+                        "shared_tasks": len(shared_tasks),
+                        "interaction_type": "task_collaboration"
+                    })
+        
+        return {
+            "session_id": session_id,
+            "collaborations": collaborations,
+            "total_interactions": len(collaborations)
+        }
     
     async def shutdown(self) -> None:
         """Gracefully shutdown the orchestrator"""
         try:
             logger.info("Shutting down Enhanced Agent Orchestrator...")
             
-            # Stop all running sessions
-            for session in self.crew_sessions.values():
-                if session.status == "running":
-                    session.status = "stopped"
+            # Stop all active sessions
+            for session_id in list(self.crew_sessions.keys()):
+                await self.stop_crew_session(session_id)
             
-            # Shutdown executor
-            self.executor.shutdown(wait=True)
-            
-            # Final cleanup
-            await self.cleanup_resources()
+            # Clear all collections
+            self.agent_instances.clear()
+            self.active_agents.clear()
+            self.task_queue.clear()
+            self.completed_tasks.clear()
+            self.failed_tasks.clear()
+            self.crew_sessions.clear()
             
             logger.info("Enhanced Agent Orchestrator shutdown complete")
             
         except Exception as e:
-            logger.error(f"Error during shutdown: {e}")
+            logger.error(f"Error during orchestrator shutdown: {e}")
+            
+    async def cleanup_resources(self) -> None:
+        """Clean up completed sessions and unused resources"""
+        try:
+            current_time = datetime.utcnow()
+            sessions_to_remove = []
+            
+            # Find completed sessions older than 1 hour
+            for session_id, session in self.crew_sessions.items():
+                if session.status in ["completed", "failed"] and session.completed_at:
+                    completed_time = datetime.fromisoformat(session.completed_at)
+                    if (current_time - completed_time).total_seconds() > 3600:  # 1 hour
+                        sessions_to_remove.append(session_id)
+            
+            # Remove old completed sessions
+            for session_id in sessions_to_remove:
+                del self.crew_sessions[session_id]
+                logger.info(f"Cleaned up completed session: {session_id}")
+            
+            # Clean up completed tasks older than 6 hours
+            tasks_to_remove = []
+            for task_id, task in self.completed_tasks.items():
+                if task.completed_at:
+                    completed_time = datetime.fromisoformat(task.completed_at)
+                    if (current_time - completed_time).total_seconds() > 21600:  # 6 hours
+                        tasks_to_remove.append(task_id)
+            
+            for task_id in tasks_to_remove:
+                del self.completed_tasks[task_id]
+            
+            logger.info(f"Resource cleanup complete. Removed {len(sessions_to_remove)} sessions and {len(tasks_to_remove)} tasks")
+            
+        except Exception as e:
+            logger.error(f"Error during resource cleanup: {e}")
+            
+    async def cleanup_completed_agents(self) -> None:
+        """Clean up agents that have completed their tasks"""
+        try:
+            agents_to_remove = []
+            
+            # Find agents with completed status
+            for agent_id, agent in self.agent_instances.items():
+                if agent.status == "completed":
+                    agents_to_remove.append(agent_id)
+            
+            # Also check legacy active_agents
+            for agent_id, agent in self.active_agents.items():
+                if agent.status == "completed":
+                    agents_to_remove.append(agent_id)
+            
+            # Remove completed agents
+            for agent_id in agents_to_remove:
+                if agent_id in self.agent_instances:
+                    del self.agent_instances[agent_id]
+                if agent_id in self.active_agents:
+                    del self.active_agents[agent_id]
+                logger.info(f"Cleaned up completed agent: {agent_id}")
+            
+            logger.info(f"Agent cleanup complete. Removed {len(agents_to_remove)} completed agents")
+            
+        except Exception as e:
+            logger.error(f"Error during agent cleanup: {e}")

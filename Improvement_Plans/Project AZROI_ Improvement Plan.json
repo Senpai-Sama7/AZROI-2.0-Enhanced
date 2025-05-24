@@ -1,0 +1,431 @@
+{  
+  "title": "Project AZROI: UI and CrewAI Integration Strategy",  
+  "date": "May 24, 2025",  
+  "version": "1.0",  
+  "sections": \[  
+	{  
+  	"id": "1",  
+  	"title": "Consolidated Analysis of Existing Plans",  
+  	"description": "This section consolidates the existing plans for UI development and agent orchestration from the provided documents.",  
+  	"subsections": \[  
+    	{  
+      	"id": "1.a",  
+      	"title": "UI Development Plans",  
+      	"content": \[  
+        	{  
+          	"source": "\`Google Studio Analysis.txt\` (III.g: Elevate Frontend UI/UX)",  
+          	"points": \[  
+            	"Visual Multi-Agent Workflow Panel: Implement \`MultiAgentStatusPanel.tsx\` to display agent names, icons, statuses (idle, active, completed, error), and current tasks via WebSocket updates (\`WebSocketAgentUpdateMessage\`).",  
+            	"Real-Time Progress & Logs: Robust WebSocket handling (\`useGoalWebsocket.ts\`) for all message types. \`LogPanel.tsx\` for timestamped, color-coded, filterable/searchable logs (\`WebSocketLogMessage\`). \`OutputArtifactsPanel.tsx\` to render \`ArchitectOutput\` types (\`WebSocketOutputArtifactMessage\`). Prominent display of \`ArchitectGoal.status\`.",  
+            	"Improved Goal Input: Enhance input form to integrate client-side Gemini analysis feedback for goal refinement before backend submission. Optional advanced inputs (target cloud, language).",  
+            	"CSS & Theme Consolidation: Resolve CSS redundancies and ensure consistent \\"Deep Space Gemstone\\" theme application."  
+          	\]  
+        	},  
+        	{  
+          	"source": "\`GEMINI 2.5 ANALYSIS.txt\` (Strategic Transformation Master Plan \- III.g: Elevate Frontend UI/UX)",  
+          	"points": \[  
+            	"Visual Agent Workflow Display (\`ArchitectDashboard.tsx\`): Graphical representation (flowchart/cards) of agent states, tasks, dependencies. Clear visual cues for active agent, handoffs, progress.",  
+            	"Enhanced Progress/Log Display: Log filtering/searching. Improved artifact presentation (syntax highlighting, previews) in \`OutputContentRenderer.tsx\`. Finer-grained progress updates.",  
+            	"Input Form & NLU Interpretation (\`GoalInputPanel.tsx\`): Better examples/guidance. Integrate backend Gemini analysis output for user confirmation/refinement."  
+          	\]  
+        	},  
+        	{  
+          	"source": "\`how to complete azroi.txt\` (Frontend Refactoring & AI IDE)",  
+          	"points": \[  
+            	"Frontend Refactoring: Mentions reviewing React components for reusability (Atomic Design), optimizing Zustand state management, and creating a dedicated API client module for backend/WebSocket communications.",  
+            	"Meta-Prompt / Guided Prompt Structure for the 'AI IDE': Implies the UI needs to clearly present the AI's understanding, allow user clarification, and display outputs from a \\"Gemini-Powered Pre-Analysis Refinement\\" (UI presents analysis, allows user response/approval). The UI should also handle project history display."  
+          	\]  
+        	}  
+      	\],  
+      	"consolidated\_vision": "The UI aims to be a \\"Mission Control\\" providing high transparency into the multi-agent workflow. Key features include real-time visualization of agent statuses and tasks, detailed and filterable logs, clear presentation of generated artifacts, and an intelligent goal input mechanism that leverages Gemini for pre-analysis and user refinement."  
+    	},  
+    	{  
+      	"id": "1.b",  
+      	"title": "Agent Orchestration & CrewAI Integration Plans",  
+      	"content": \[  
+        	{  
+          	"source": "\`Google Studio Analysis.txt\` (I.a: Refactor Orchestration into a True Multi-Agent System)",  
+          	"points": \[  
+            	"Explicit Agent Services: Modular classes for ArchitectAgent, PlannerAgent (AZR), CodeExecutionAgent (OI, SafetySandbox), GCPCloudAgent, AzureCloudAgent. Defined responsibilities, APIs, state management.",  
+            	"AgentOrchestrator Enhancement: Instantiate/manage agents, interpret execution plans (task graph), dispatch tasks, manage dependencies, aggregate results, drive goal state.",  
+            	"Communication: Shared state updates via orchestrator."  
+          	\]  
+        	},  
+        	{  
+          	"source": "\`GEMINI 2.5 ANALYSIS.txt\` (Strategic Transformation Master Plan \- I.a: Refactor Orchestration into a True Multi-Agent System & Phase 1 Completion Report)",  
+          	"points": \[  
+            	"Explicit CrewAI Focus:",  
+            	\[  
+              	"Agent Roles Defined: ProjectManager, PlannerAgent (AZR-enhanced), ArchitectAgent, CodeExecutionAgent (OI-focused), GCPCloudAgent, AzureCloudAgent (new), QualityAssuranceAgent (new).",  
+              	"Agent Implementation: Develop as Python classes, leveraging CrewAI's \`Agent\` as a base.",  
+              	"AgentOrchestrator Redesign: Rebuild \`agent\_orchestrator.py\` to dynamically manage and dispatch tasks to the CrewAI-based agent team. Integrate CrewAI's \`Crew\` and \`Task\` for managing sequences.",  
+              	"Communication & State: Utilize CrewAI's context/data passing. Standardize WebSocket messages for detailed frontend updates on agent/task states."  
+            	\],  
+            	"Phase 1 Gaps (CrewAI): \\"AgentOrchestrator's ... plan execution logic is currently a placeholder and does not demonstrate actual CrewAI-based task dispatching or inter-agent collaboration.\\" This highlights the need for the Master Plan's CrewAI integration."  
+          	\]  
+        	},  
+        	{  
+          	"source": "\`how to complete azroi.txt\` (AI Agent System Design)",  
+          	"points": \[  
+            	"Agent Protocol: Define a strict, typed protocol (e.g., Pydantic models) for orchestrator-agent communication.",  
+            	"Agent Specialization: Enforce clearly defined roles for each agent.",  
+            	"Orchestration Logic: Refine to be event-driven or state-machine based. Log agent state transitions."  
+          	\]  
+        	}  
+      	\],  
+      	"consolidated\_vision": "The backend will evolve into a true multi-agent system explicitly using CrewAI. The \`AgentOrchestrator\` will be redesigned to manage CrewAI \`Crew\`s, composed of specialized \`Agent\`s (ProjectManager, Planner, Architect, CodeExecution, Cloud-Specific, QA). These agents will collaborate through CrewAI's mechanisms, executing tasks defined in a plan, with clear communication protocols and state management."  
+    	}  
+  	\]  
+	},  
+	{  
+  	"id": "2",  
+  	"title": "Evaluation of Consolidated Plans",  
+  	"subsections": \[  
+    	{  
+      	"id": "2.a",  
+      	"title": "UI Plan Completeness",  
+      	"points": \[  
+        	"User Interaction Flows: The plans generally cover goal input, refinement with Gemini analysis, and viewing ongoing progress/results. The flow for interacting with specific agent outputs or errors could be more detailed.",  
+        	"Real-time Feedback for CrewAI Agent Activities: The concepts of a \\"Visual Multi-Agent Workflow Panel\\" and real-time logs are strong foundations. However, the \*granularity\* of feedback for individual CrewAI agent states (e.g., \\"agent X is now using tool Y,\\" \\"agent Z is waiting for input from agent A\\") is not explicitly detailed.",  
+        	"Visualization of Multi-Agent Workflow: The plans call for visualization, which is excellent. The \*specifics\* of how the relationships, dependencies, and handoffs between multiple CrewAI agents within a crew will be visually represented could be further elaborated."  
+      	\],  
+      	"conclusion": "The UI plan is comprehensive in its high-level goals for transparency and real-time feedback. It needs more detailed specifications on how individual CrewAI agent activities, transitions, and detailed outputs/errors will be distinctly visualized beyond general log streams or artifact lists."  
+    	},  
+    	{  
+      	"id": "2.b",  
+      	"title": "CrewAI Integration Details Completeness",  
+      	"points": \[  
+        	"Agent Roles: The roles (ProjectManager, Planner, Architect, CodeExecution, Cloud Agents, QA) are well-defined in \`GEMINI 2.5 ANALYSIS.txt\`.",  
+        	"Tools & Tasks: The \*concept\* of specialized agents implies distinct tools and tasks. However, the \*specific tools\* for each CrewAI agent and the \*detailed breakdown of tasks\* they would undertake within a CrewAI framework are not fully enumerated.",  
+        	"Inter-Agent Communication: \\"CrewAI's context/data passing\\" is mentioned. The \*protocols and schemas\* for this data, especially for complex artifact handoff or collaborative decision-making, need more definition.",  
+        	"\`AgentOrchestrator\` Management: The plan to refactor \`AgentOrchestrator\` to manage CrewAI \`Crew\`s and \`Task\`s is clear. The robustness of this management (e.g., error handling within a crew, dynamic crew composition, lifecycle management of crews) needs detailed design."  
+      	\],  
+      	"conclusion": "The strategic direction to use CrewAI and the definition of agent roles are strong. \\"Full integration\\" requires more granular detailing of each agent's tools, specific CrewAI task definitions, precise data exchange mechanisms within a crew, and the detailed operational logic within \`AgentOrchestrator\` for managing CrewAI lifecycles robustly. The current placeholder logic in \`agent\_orchestrator.py\` needs to be replaced with a concrete CrewAI implementation."  
+    	}  
+  	\]  
+	},  
+	{  
+  	"id": "3",  
+  	"title": "Proposed Improvements to UI Plan",  
+  	"subsections": \[  
+    	{  
+      	"id": "3.a",  
+      	"title": "Detailed UI Specifications for CrewAI Agent & Task Visualization",  
+      	"description": "To ensure comprehensive \\"finish the UI\\" for CrewAI:",  
+      	"proposals": \[  
+        	{  
+          	"item\_id": "1",  
+          	"name": "Global Crew Overview Panel",  
+          	"details": \[  
+            	"Displays the current active \`Crew\` ID and its overall status (e.g., \`INITIALIZING\`, \`PLANNING\_PHASE\`, \`EXECUTION\_PHASE\`, \`VALIDATION\_PHASE\`, \`COMPLETED\`, \`ERROR\`).",  
+            	"Lists all \`Agent\`s within the current crew with their name, role, and a high-level status icon/text (e.g., Idle, Active, Blocked, Error, Success)."  
+          	\]  
+        	},  
+        	{  
+          	"item\_id": "2",  
+          	"name": "Detailed Agent Interaction Panel (Expandable/Drill-Down per Agent)",  
+          	"details": \[  
+            	"Agent Identification: Agent Name, Role (e.g., \\"PlannerAgent\\"), and a unique Agent ID within the crew.",  
+            	"Current Task: Description of the specific CrewAI \`Task\` the agent is currently executing (e.g., \\"Generating Python code for API endpoint /users\\").",  
+            	{  
+              	"name": "Status & Transitions",  
+              	"points": \[  
+                	"Clear visual indicators for agent status: \`IDLE\`, \`THINKING/PLANNING\`, \`USING\_TOOL\` (display tool name), \`WAITING\_FOR\_DATA\`, \`TASK\_COMPLETED\`, \`ERROR\_IN\_TASK\`.",  
+                	"Visual cues for transitions (e.g., animations, color changes) as an agent moves between these states or starts/completes a task."  
+              	\]  
+            	},  
+            	{  
+              	"name": "Outputs & Artifacts",  
+              	"points": \[  
+                	"A dedicated, structured section for outputs generated by the agent for the current task.",  
+                	"For code: Snippet view with syntax highlighting, option to copy, link to full file if large.",  
+                	"For analysis/reports: Formatted text or markdown.",  
+                	"For file lists/URLs: Clickable links.",  
+                	"Clear indication of when an output is an intermediate result vs. a final artifact."  
+              	\]  
+            	},  
+            	{  
+              	"name": "Errors",  
+              	"points": \[  
+                	"Prominently displayed, user-friendly error messages specific to the agent's failed task.",  
+                	"Option to view detailed error logs or stack traces if applicable."  
+              	\]  
+            	},  
+            	{  
+              	"name": "Logs",  
+              	"points": \[  
+                	"Timestamped log stream specifically for the selected agent's activities related to its current task.",  
+                	"Filterable by log level (INFO, WARN, ERROR, DEBUG).",  
+                	"Should include logs of tool usage, key decisions, and significant events."  
+              	\]  
+            	}  
+          	\]  
+        	},  
+        	{  
+          	"item\_id": "3",  
+          	"name": "Task Flow Visualization",  
+          	"details": \[  
+            	"A dynamic visual representation (e.g., a simplified DAG or timeline) of the CrewAI \`Task\`s as defined by the PlannerAgent.",  
+            	"Shows dependencies between tasks.",  
+            	"Highlights the currently executing task(s) and the agent(s) assigned.",  
+            	"Updates in real-time to show completed tasks, failed tasks, and upcoming tasks."  
+          	\]  
+        	}  
+      	\]  
+    	},  
+    	{  
+      	"id": "3.b",  
+      	"title": "Verification of \`HOW\_TO\_USE.md\` Features",  
+      	"description": "The UI design and functionality must explicitly incorporate all user-facing features described or implied in \`HOW\_TO\_USE.md\`. Based on the project's nature, this includes (but is not limited to):",  
+      	"features\_to\_verify": \[  
+        	"Clear goal input mechanisms.",  
+        	"Display of Gemini-powered analysis and options for user feedback/refinement.",  
+        	"Selection of target cloud environments (GCP/Azure) if this is a user choice presented early.",  
+        	"Comprehensive display of the generated plan (tasks, sequence).",  
+        	"Access to view generated code and Dockerfiles.",  
+        	"Real-time status of code uploads, image builds, and cloud deployments.",  
+        	"Display of final deployment URLs and service statuses.",  
+        	"Clear error messages and troubleshooting information.",  
+        	"Access to project history and persistent memory artifacts."  
+      	\],  
+      	"note": "The UI enhancements proposed in 3.a should inherently cover these, ensuring a direct mapping from documented features to UI elements."  
+    	}  
+  	\]  
+	},  
+	{  
+  	"id": "4",  
+  	"title": "Refined Strategy for Full CrewAI Integration in \`AgentOrchestrator\`",  
+  	"subsections": \[  
+    	{  
+      	"id": "4.a",  
+      	"title": "Definition of Specific CrewAI Agent Roles",  
+      	"description": "Adopt the roles from \`GEMINI 2.5 ANALYSIS.txt\` for CrewAI \`Agent\`s:",  
+      	"agent\_roles": \[  
+        	{  
+          	"name": "ProjectManagerAgent",  
+          	"goal": "Oversee the entire project lifecycle from goal ingestion to final reporting. Ensure alignment with user's intent.",  
+          	"backstory": "An experienced project manager AI adept at breaking down complex goals and coordinating diverse teams."  
+        	},  
+        	{  
+          	"name": "PlannerAgent",  
+          	"goal": "Decompose the high-level project goal into a detailed, sequenced list of executable CrewAI \`Task\`s with dependencies.",  
+          	"backstory": "A meticulous planning AI that leverages strategic frameworks (like AZR if integrated as a tool) to create actionable roadmaps."  
+        	},  
+        	{  
+          	"name": "ArchitectAgent",  
+          	"goal": "Design the technical architecture for the software/system based on the refined goal and plan. Select appropriate technologies and patterns.",  
+          	"backstory": "A seasoned solutions architect AI with broad knowledge of software design principles and cloud technologies."  
+        	},  
+        	{  
+          	"name": "CodeExecutionAgent",  
+          	"goal": "Generate, validate, and refine application code, Dockerfiles, and other necessary scripts.",  
+          	"backstory": "An expert programmer AI proficient in multiple languages and experienced with Open Interpreter for code generation and execution."  
+        	},  
+        	{  
+          	"name": "GCPCloudAgent / AzureCloudAgent",  
+          	"goal": "Manage all interactions with the specified cloud provider (GCP or Azure) for resource provisioning, deployment, and management.",  
+          	"backstory": "A cloud engineer AI specialized in GCP/Azure, expert in their SDKs, CLIs, and IaC practices."  
+        	},  
+        	{  
+          	"name": "QualityAssuranceAgent (QA Agent)",  
+          	"goal": "Define and execute tests (unit, integration, smoke) on generated code and deployed services. Report findings.",  
+          	"backstory": "A diligent QA engineer AI focused on ensuring the quality and correctness of the deliverables."  
+        	}  
+      	\]  
+    	},  
+    	{  
+      	"id": "4.b",  
+      	"title": "Distinct Tools and Tasks for Each CrewAI Agent",  
+      	"agents": \[  
+        	{  
+          	"name": "ProjectManagerAgent",  
+          	"tools": \["GoalRefinementTool (interacts with user or uses LLM for clarification)", "StatusTrackingTool", "ReportingTool"\],  
+          	"tasks\_crewai": \["Clarify\_User\_Goal", "Monitor\_Crew\_Progress", "Aggregate\_Final\_Results", "Report\_Completion\_Status"\]  
+        	},  
+        	{  
+          	"name": "PlannerAgent",  
+          	"tools": \["LLMPlanningTool (e.g., Gemini via \`LLMRouter\`)", "TaskDependencyTool", "AZRFrameworkTool (if AZR is a callable tool)"\],  
+          	"tasks\_crewai": \["Decompose\_Goal\_Into\_Tasks", "Define\_Task\_Sequence\_And\_Dependencies", "Estimate\_Task\_Effort (optional)"\]  
+        	},  
+        	{  
+          	"name": "ArchitectAgent",  
+          	"tools": \["LLMDesignTool", "TechStackSelectionTool", "KnowledgeBaseSearchTool (Qdrant for architectural patterns)", "DiagrammingTool (conceptual output, e.g., mermaid syntax)"\],  
+          	"tasks\_crewai": \["Design\_System\_Architecture", "Select\_Technologies\_And\_Frameworks", "Define\_Data\_Models", "Specify\_API\_Contracts"\]  
+        	},  
+        	{  
+          	"name": "CodeExecutionAgent",  
+          	"tools": \["OpenInterpreterTool (configured for code gen, file ops)", "FileLinterTool (Pylint, ESLint)", "StaticAnalysisTool (Bandit, TFSec)", "DockerfileValidatorTool (hadolint)", "ScriptExecutionTool"\],  
+          	"tasks\_crewai": \["Generate\_Application\_Code\_For\_Component\_X", "Generate\_Dockerfile", "Generate\_IaC\_Script\_Y", "Lint\_And\_Validate\_Code", "Execute\_Correction\_Script"\]  
+        	},  
+        	{  
+          	"name": "GCPCloudAgent / AzureCloudAgent",  
+          	"tools": \["GCPSDKTool / AzureSDKTool (wrappers around specific SDK functions)", "GCloudCLITool / AzCLITool", "TerraformExecutionTool (if using Terraform)"\],  
+          	"tasks\_crewai": \["Create\_GCS\_Bucket\_Z / Create\_Azure\_Blob\_Container\_Z", "Upload\_Artifacts\_To\_Cloud\_Storage", "Trigger\_Cloud\_Build\_Pipeline / Run\_ACR\_Task", "Deploy\_To\_Cloud\_Run\_Service\_X / Deploy\_To\_Azure\_App\_Service\_X", "Check\_Deployment\_Status"\]  
+        	},  
+        	{  
+          	"name": "QA\_Agent",  
+          	"tools": \["TestExecutionFrameworkTool (pytest, Jest)", "APITestClientTool (httpx, requests)", "ValidationScriptRunnerTool"\],  
+          	"tasks\_crewai": \["Execute\_Unit\_Tests", "Perform\_Integration\_Test\_Suite\_A", "Run\_Smoke\_Test\_On\_Deployed\_Service"\]  
+        	}  
+      	\]  
+    	},  
+    	{  
+      	"id": "4.c",  
+      	"title": "Workflow, Collaboration Mechanisms, and Data Exchange",  
+      	"workflow\_details": {  
+        	"steps": \[  
+          	"\`ProjectManagerAgent\` receives the initial goal, potentially refines it.",  
+          	"\`PlannerAgent\` takes the refined goal, creates a list of CrewAI \`Task\`s with descriptions, expected outputs, and dependencies.",  
+          	"The \`AgentOrchestrator\` uses this plan to kick off a CrewAI \`Crew\`.",  
+          	"Tasks are assigned to appropriate agents (e.g., \`ArchitectAgent\` for design tasks, \`CodeExecutionAgent\` for coding tasks, then \`CloudAgent\` for deployment, \`QA\_Agent\` for testing).",  
+          	"CrewAI's \`Process.sequential\` can be used for many phases, but \`Process.hierarchical\` might be relevant if sub-crews are needed for complex sub-goals."  
+        	\]  
+      	},  
+      	"collaboration\_mechanisms": \[  
+        	"Shared Context: CrewAI \`Agent\`s share context. The output of one task (e.g., architectural design from \`ArchitectAgent\`) becomes input for subsequent tasks (e.g., for \`CodeExecutionAgent\`).",  
+        	"Tools as Interfaces: Agents can expose tools that other agents might (rarely, and if designed carefully) be able to call, or more commonly, the \`AgentOrchestrator\` uses an agent's output to inform the input to another agent's task."  
+      	\],  
+      	"data\_exchange\_protocols": \[  
+        	"Task Outputs: Each CrewAI \`Task\` must define its expected output format (e.g., a Pydantic model, a JSON string, a file path).",  
+        	"Standardized Data Structures: Use Pydantic models for structured data passed between agents (e.g., \`ArchitecturalDesignDocument\`, \`DeploymentConfiguration\`, \`TestResultReport\`).",  
+        	"Artifact Storage: For large artifacts (codebases, container images), agents will store them in a shared location (e.g., a temporary file system, GCS/Azure Blob), and the \*path or URI\* to the artifact is passed in the CrewAI context. \`MemoryManager\` (Qdrant) will store metadata and references to these artifacts."  
+      	\]  
+    	},  
+    	{  
+      	"id": "4.d",  
+      	"title": "Enhancements to \`AgentOrchestrator\` for CrewAI Management",  
+      	"description": "The \`agent\_orchestrator.py\` (currently \`HighPerformanceAgentOrchestrator\`) needs significant refactoring beyond its current task-based system to become a CrewAI-centric orchestrator:",  
+      	"enhancements": \[  
+        	"Crew Definition and Instantiation: Dynamically define a CrewAI \`Crew\` based on the plan from \`PlannerAgent\`. Instantiate \`Agent\` objects with specific configurations.",  
+        	"Task Creation and Assignment: Translate \`PlannerAgent\` plan into CrewAI \`Task\` objects with description, expected output, assigned agent, and context.",  
+        	"Crew Execution and Lifecycle: Method to \`kickoff()\` the CrewAI \`Crew\`. Monitor execution and handle outputs.",  
+        	"Real-time Monitoring and Feedback: Integrate with CrewAI's callback mechanisms. Translate callbacks into WebSocket messages for the frontend.",  
+        	"Error Handling and Resilience for Crews: Gracefully handle errors within CrewAI \`Task\` or \`Agent\`. Implement retry strategies. Propagate errors to UI.",  
+        	"Context Management: Manage initial crew context. Ensure task outputs are added to shared context.",  
+        	"Resource Management: Manage lifecycle of tools/services used by agents.",  
+        	"Configuration: Allow configuration of CrewAI parameters via \`config.json\`."  
+      	\]  
+    	}  
+  	\]  
+	},  
+	{  
+  	"id": "5",  
+  	"title": "Interdependencies between UI and CrewAI-Driven Backend",  
+  	"subsections": \[  
+    	{  
+      	"id": "5.a",  
+      	"title": "Necessary WebSocket Message Types (extending \`frontend/src/types.ts\` concepts)",  
+      	"message\_types": \[  
+        	"\`GoalAccepted\`: \`goal\_id\`, \`user\_goal\_text\`",  
+        	"\`CrewInitializationStatus\`: \`goal\_id\`, \`crew\_id\`, \`status\` (e.g., \\"Crew defined, agents assigned\\")",  
+        	"\`CrewProcessingUpdate\`: \`goal\_id\`, \`crew\_id\`, \`overall\_crew\_status\` (e.g., \`RUNNING\`, \`COMPLETED\`, \`FAILED\`), \`current\_phase\` (e.g., \\"Planning\\", \\"Architecture Design\\", \\"Coding\\", \\"Deployment\\", \\"QA\\")",  
+        	"\`AgentTaskStarted\`: \`goal\_id\`, \`crew\_id\`, \`task\_id\`, \`agent\_name\`, \`agent\_role\`, \`task\_description\`, \`timestamp\`",  
+        	"\`AgentTaskProgress\`: \`goal\_id\`, \`crew\_id\`, \`task\_id\`, \`agent\_name\`, \`progress\_message\`, \`tool\_being\_used\` (optional), \`timestamp\`",  
+        	"\`AgentTaskOutputGenerated\`: \`goal\_id\`, \`crew\_id\`, \`task\_id\`, \`agent\_name\`, \`output\_type\` (\`LOG\`, \`ARTIFACT\_LINK\`, \`STRUCTURED\_DATA\`, \`ERROR\_MESSAGE\`, \`STATUS\_UPDATE\`), \`content\`, \`is\_final\_output\_for\_task\` (boolean), \`timestamp\`",  
+        	"\`AgentTaskCompleted\`: \`goal\_id\`, \`crew\_id\`, \`task\_id\`, \`agent\_name\`, \`status\` (\`SUCCESS\`, \`FAILURE\`), \`result\_summary\`, \`next\_task\_id\_if\_known\` (optional), \`timestamp\`",  
+        	"\`CrewCompleted\`: \`goal\_id\`, \`crew\_id\`, \`final\_status\` (\`SUCCESS\`, \`FAILURE\`), \`final\_message\`, \`final\_artifacts\` (list), \`timestamp\`",  
+        	"\`SystemAlert\`: \`message\_type\` (\`ERROR\`, \`WARNING\`, \`INFO\`), \`message\_text\`"  
+      	\]  
+    	},  
+    	{  
+      	"id": "5.b",  
+      	"title": "Methods for Passing, Storing, and Presenting Data/Artifacts",  
+      	"methods": {  
+        	"passing": \[  
+          	"Small, structured data (JSON, text) directly within WebSocket \`AgentTaskOutputGenerated\` messages.",  
+          	"For larger artifacts (codebases, logs, images): Agents save to shared temporary storage (local or cloud). URI/path sent via WebSocket. Backend API endpoint (\`/api/artifacts/{goal\_id}/{artifact\_name}\`) for frontend download or direct cloud URL."  
+        	\],  
+        	"storing\_qdrant\_memorymanager": \[  
+          	"\`AgentOrchestrator\` uses \`MemoryManager\` to store:",  
+          	"Task Details: Description, agent, status, execution time.",  
+          	"Key Outputs: Structured data, content summaries.",  
+          	"Artifact References: URIs/paths.",  
+          	"Agent Interactions/Decisions: LLM prompts/responses, tool logs.",  
+          	"Stored in Qdrant collections (\`project\_history\`, \`learned\_patterns\`, \`agent\_interactions\`) with metadata."  
+        	\],  
+        	"presenting\_ui": \[  
+          	"Frontend parses WebSocket messages.",  
+          	"Dedicated UI components display agent statuses, task progress, logs.",  
+          	"\`ARTIFACT\_LINK\` types render clickable links.",  
+          	"\`STRUCTURED\_DATA\` formatted appropriately (JSON viewer, text).",  
+          	"Code snippets with syntax highlighting.",  
+          	"UI mechanisms to filter logs, search artifacts, navigate task flow."  
+        	\]  
+      	}  
+    	}  
+  	\]  
+	},  
+	{  
+  	"id": "6",  
+  	"title": "Enhancements to Testing Strategy (\`TESTING.MD\`)",  
+  	"description": "Based on \`test\_requirements.txt\` (assumed to list testing libraries like pytest, etc.) and the need for robust CrewAI integration:",  
+  	"subsections": \[  
+    	{  
+      	"id": "6.a",  
+      	"title": "End-to-End (E2E) Test Scenarios (UI \+ CrewAI Backend)",  
+      	"scenarios": \[  
+        	{  
+          	"name": "Scenario 1: Successful GCP Python App Deployment.",  
+          	"input": "User goal \\"Create a simple Python Flask API with a /ping endpoint and deploy it to GCP Cloud Run.\\"",  
+          	"verification": \[  
+            	"UI correctly displays goal acceptance, crew initialization.",  
+            	"PlannerAgent task list appears correctly in UI.",  
+            	"ArchitectAgent, CodeExecutionAgent, GCPCloudAgent statuses update in UI through various stages.",  
+            	"Logs from each agent are streamed and viewable.",  
+            	"Final Cloud Run URL is displayed and is accessible, returning expected \\"pong\\".",  
+            	"Relevant artifacts noted in \`MemoryManager\`."  
+          	\]  
+        	},  
+        	{  
+          	"name": "Scenario 2: Successful Azure Node.js App Deployment.",  
+          	"input": "Similar to Scenario 1, but for Azure and a Node.js Express app."  
+        	},  
+        	{  
+          	"name": "Scenario 3: Invalid User Goal.",  
+          	"input": "User goal \\"Bake me a cake.\\"",  
+          	"verification": "ProjectManagerAgent or PlannerAgent identifies inability to fulfill, UI displays appropriate message, crew terminates gracefully."  
+        	},  
+        	{  
+          	"name": "Scenario 4: Cloud Authentication Failure.",  
+          	"input": "Valid app goal, but backend configured with invalid cloud credentials.",  
+          	"verification": "CloudAgent task fails, error propagated, UI displays clear error message."  
+        	},  
+        	{  
+          	"name": "Scenario 5: Code Generation Failure & Recovery (if self-correction is implemented).",  
+          	"input": "Goal leading to code that initially fails linting/tests.",  
+          	"verification": "CodeExecutionAgent attempts correction, UI shows attempts. Verify success or graceful failure."  
+        	}  
+      	\]  
+    	},  
+    	{  
+      	"id": "6.b",  
+      	"title": "Integration Tests for \`AgentOrchestrator\` and CrewAI",  
+      	"test\_suite\_name": "\`test\_crew\_orchestration.py\`",  
+      	"tests": \[  
+        	"\`test\_crew\_instantiation\_from\_plan\`: Mocks \`PlannerAgent\` output. Verifies \`AgentOrchestrator\` creates CrewAI \`Crew\` with specified \`Agent\`s and \`Task\`s.",  
+        	"\`test\_sequential\_task\_execution\_success\`: Mocks a crew. Verifies tasks execute in order, output from task N available to task N+1.",  
+        	"\`test\_task\_failure\_halts\_crew\`: Mocks agent task exception. Verifies crew stops, error reported.",  
+        	"\`test\_websocket\_callbacks\_on\_agent\_activity\`: Mocks CrewAI callbacks. Verifies \`AgentOrchestrator\` sends appropriate WebSocket messages.",  
+        	"\`test\_result\_aggregation\_from\_crew\`: Verifies \`AgentOrchestrator\` correctly extracts final output from successful crew.",  
+        	"\`test\_agent\_tool\_execution\`: Mocks agent and tool. Verifies \`AgentOrchestrator\` can trigger task involving tool and receives expected outcome."  
+      	\]  
+    	},  
+    	{  
+      	"id": "6.c",  
+      	"title": "Frontend Tests for UI Components Displaying CrewAI Information",  
+      	"test\_suite\_name": "\`AgentDisplayComponents.test.tsx\` (using Jest/React Testing Library)",  
+      	"tests": \[  
+        	"\`test\_renders\_agent\_status\_list\`: Given mock WebSocket data, verifies \`MultiAgentStatusPanel\` renders agents correctly.",  
+        	"\`test\_renders\_detailed\_agent\_view\_on\_click\`: Verifies clicking agent expands to show details.",  
+        	"\`test\_agent\_logs\_are\_displayed\_and\_filterable\`: Mocks log messages. Verifies \`LogPanel\` displays and filtering works.",  
+        	"\`test\_agent\_artifacts\_are\_rendered\_correctly\`: Mocks artifact links. Verifies \`OutputArtifactsPanel\` shows links/data.",  
+        	"\`test\_task\_flow\_visualization\_updates\`: Mocks task status updates. Verifies visual task flow diagram updates.",  
+        	"\`test\_error\_messages\_from\_agent\_are\_shown\`: Mocks agent error. Verifies UI displays error clearly."  
+      	\]  
+    	}  
+  	\],  
+  	"note": "These testing enhancements will ensure that the complex interactions within the CrewAI framework and their reflection in the UI are robust and reliable."  
+	}  
+  \]  
+}
+

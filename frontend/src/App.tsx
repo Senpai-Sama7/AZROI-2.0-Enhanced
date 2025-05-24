@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import Header from './components/Header';
 import GoalInputPanel from './components/GoalInputPanel';
 import ArchitectDashboard from './components/ArchitectDashboard';
+import CrewAIWrapper from './components/CrewAIWrapper';
 import MonitoringPanel from './components/MonitoringPanel';
 import ConfigPanel from './components/ConfigPanel';
 import HelpSettingsModal from './components/HelpSettingsModal';
@@ -19,7 +20,7 @@ const App: React.FC = () => {
   const [processingError, setProcessingError] = useState<string | null>(null);
   
   // UI state
-  const [activePanel, setActivePanel] = useState<'input' | 'dashboard' | 'monitoring' | 'config'>('input');
+  const [activePanel, setActivePanel] = useState<'input' | 'dashboard' | 'crew' | 'monitoring' | 'config'>('input');
   const [isHelpModalOpen, setIsHelpModalOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   
@@ -220,7 +221,8 @@ const App: React.FC = () => {
   // Panel navigation
   const navigationItems = [
     { id: 'input' as const, label: 'New Goal', isActive: activePanel === 'input' },
-    { id: 'dashboard' as const, label: 'Dashboard', isActive: activePanel === 'dashboard', disabled: !currentGoal },
+    { id: 'dashboard' as const, label: 'Architect', isActive: activePanel === 'dashboard', disabled: !currentGoal },
+    { id: 'crew' as const, label: 'CrewAI', isActive: activePanel === 'crew' },
     { id: 'monitoring' as const, label: 'Monitoring', isActive: activePanel === 'monitoring' },
     { id: 'config' as const, label: 'Config', isActive: activePanel === 'config' }
   ];
@@ -250,6 +252,11 @@ const App: React.FC = () => {
                   }`}
                 >
                   {item.label}
+                  {item.id === 'crew' && (
+                    <span className="ml-1 text-xs bg-green-500/20 text-green-400 px-1.5 py-0.5 rounded-full">
+                      NEW
+                    </span>
+                  )}
                 </button>
               ))}
             </div>
@@ -274,6 +281,10 @@ const App: React.FC = () => {
               />
             )}
             
+            {activePanel === 'crew' && (
+              <CrewAIWrapper />
+            )}
+            
             {activePanel === 'monitoring' && (
               <MonitoringPanel 
                 systemStatus={systemStatus}
@@ -290,12 +301,15 @@ const App: React.FC = () => {
 
         {/* Footer */}
         <footer className="container mx-auto px-4 py-4 text-center text-xs text-gray-500 border-t border-gray-800">
-          <p>Autonomous AI Architect v1.0 | 
+          <p>Autonomous AI Architect v2.0 | 
             {wsConnection?.readyState === WebSocket.OPEN ? (
               <span className="text-green-400 ml-1">● Connected</span>
             ) : (
               <span className="text-red-400 ml-1">● Disconnected</span>
             )}
+            <span className="ml-4 text-gray-600">
+              Multi-Agent AI Orchestration with CrewAI Integration
+            </span>
           </p>
         </footer>
       </div>
