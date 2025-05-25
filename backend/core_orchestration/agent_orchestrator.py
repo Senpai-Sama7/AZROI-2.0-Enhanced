@@ -16,50 +16,15 @@ from enum import Enum
 from concurrent.futures import ThreadPoolExecutor
 import threading
 
-try:
-    from crewai import Agent, Task, Crew, Process
-    from crewai.agent import Agent as CrewAIAgent
-    from crewai.task import Task as CrewAITask
-    from crewai.crew import Crew as CrewAICrew
-    from langchain_openai import ChatOpenAI
-    CREWAI_AVAILABLE = True
-except ImportError as e:
-    CREWAI_AVAILABLE = False
-    logging.warning(f"CrewAI not available: {e}")
-    # Create dummy classes for when CrewAI is not available
-    class Agent:
-        def __init__(self, *args, **kwargs):
-            self.role = kwargs.get('role', 'dummy')
-            self.goal = kwargs.get('goal', 'dummy goal')
-            self.backstory = kwargs.get('backstory', 'dummy backstory')
-    
-    class Task:
-        def __init__(self, *args, **kwargs):
-            self.description = kwargs.get('description', 'dummy task')
-            self.agent = kwargs.get('agent')
-    
-    class Crew:
-        def __init__(self, *args, **kwargs):
-            self.agents = kwargs.get('agents', [])
-            self.tasks = kwargs.get('tasks', [])
-        
-        def kickoff(self):
-            return "CrewAI not available - dummy result"
-    
-    class Process:
-        sequential = "sequential"
-        hierarchical = "hierarchical"
+from crewai import Agent, Task, Crew, Process
+from crewai.agent import Agent as CrewAIAgent
+from crewai.task import Task as CrewAITask
+from crewai.crew import Crew as CrewAICrew
+from langchain_openai import ChatOpenAI
+CREWAI_AVAILABLE = True
 
 # Import custom tools
-try:
-    from ..agents.crewai_tools import CREWAI_TOOLS, get_tool, get_all_tools
-except ImportError:
-    try:
-        from agents.crewai_tools import CREWAI_TOOLS, get_tool, get_all_tools
-    except ImportError:
-        CREWAI_TOOLS = {}
-        def get_tool(name): return None
-        def get_all_tools(): return []
+from agents.crewai_tools import CREWAI_TOOLS, get_tool, get_all_tools
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -142,7 +107,7 @@ class CrewSession:
     id: str
     name: str
     description: str
-    agents: List[AgentInstance]
+    agents: List<AgentInstance>
     tasks: List[CrewTask]
     crew: Optional[Any] = None
     status: str = "created"
@@ -153,19 +118,6 @@ class CrewSession:
     results: Dict[str, Any] = field(default_factory=dict)
     metrics: Dict[str, Any] = field(default_factory=dict)
 
-# Legacy Agent class for backward compatibility
-@dataclass
-class Agent:
-    """Legacy agent data structure for backward compatibility"""
-    id: str
-    name: str
-    type: str
-    status: str
-    task: Optional[str] = None
-    progress: float = 0.0
-    created_at: str = ""
-    updated_at: str = ""
-
 class EnhancedAgentOrchestrator:
     """Enhanced CrewAI orchestrator for autonomous AI architecture tasks"""
     
@@ -174,9 +126,6 @@ class EnhancedAgentOrchestrator:
         self.llm_router = llm_router
         self.max_concurrent_agents = 8
         self.max_concurrent_crews = 3
-        
-        # Legacy support
-        self.active_agents: Dict[str, Agent] = {}
         
         # Enhanced CrewAI specific components
         self.agent_instances: Dict[str, AgentInstance] = {}
@@ -520,12 +469,10 @@ class EnhancedAgentOrchestrator:
                 }
 
     async def _execute_planning_phase(self, goal_text: str, goal_id: str) -> AsyncGenerator[Dict[str, Any], None]:
-        """Execute the planning phase with CrewAI"""
-        
+        """Execute the planning phase with CrewAI (no simulated progress)"""
         # Create planning agent
         planner = await self.create_agent_instance(AgentType.PLANNER, goal_text)
-        
-        # Update status
+        # Emit agent start event
         yield {
             "type": "agent_update",
             "data": {
@@ -541,16 +488,12 @@ class EnhancedAgentOrchestrator:
                 }
             }
         }
-        
         if CREWAI_AVAILABLE and planner.crew_agent:
-            # Create planning task
             planning_task = Task(
                 description=f"Analyze the following goal and create a comprehensive plan: {goal_text}",
                 agent=planner.crew_agent,
                 expected_output="A detailed project plan with phases, tasks, and recommendations"
             )
-            
-            # Execute planning
             try:
                 crew = Crew(
                     agents=[planner.crew_agent],
@@ -558,32 +501,9 @@ class EnhancedAgentOrchestrator:
                     process=Process.sequential,
                     verbose=True
                 )
-                
-                # Simulate progress updates
-                for progress in [0.3, 0.6, 0.9]:
-                    await asyncio.sleep(1)
-                    yield {
-                        "type": "agent_update", 
-                        "data": {
-                            "agent": {
-                                "id": planner.id,
-                                "name": planner.name,
-                                "type": planner.agent_type.value,
-                                "status": "active",
-                                "task": "Analyzing and planning the goal",
-                                "progress": progress,
-                                "created_at": planner.created_at,
-                                "updated_at": datetime.utcnow().isoformat()
-                            }
-                        }
-                    }
-                
-                # Execute the crew (note: this is synchronous in CrewAI)
-                result = await asyncio.get_event_loop().run_in_executor(
-                    None, crew.kickoff
-                )
-                
-                # Generate output
+                # Run CrewAI task (blocking)
+                result = await asyncio.get_event_loop().run_in_executor(None, crew.kickoff)
+                # Emit output event
                 yield {
                     "type": "output_update",
                     "data": {
@@ -598,7 +518,6 @@ class EnhancedAgentOrchestrator:
                         }
                     }
                 }
-                
             except Exception as e:
                 logger.error(f"Planning phase failed: {e}")
                 yield {
@@ -615,29 +534,10 @@ class EnhancedAgentOrchestrator:
                         }
                     }
                 }
-        else:
-            # Fallback to basic planning
-            await asyncio.sleep(2)
-            yield {
-                "type": "output_update",
-                "data": {
-                    "output": {
-                        "id": str(uuid.uuid4()),
-                        "goalId": goal_id,
-                        "type": "planning",
-                        "title": "Basic Planning Complete",
-                        "content": f"Basic analysis completed for: {goal_text}",
-                        "timestamp": datetime.utcnow().isoformat(),
-                        "agent_id": planner.id
-                    }
-                }
-            }
-        
-        # Complete planning
+        # Mark agent as completed
         planner.status = "completed"
         planner.progress = 1.0
         planner.updated_at = datetime.utcnow().isoformat()
-        
         yield {
             "type": "agent_update",
             "data": {
@@ -655,12 +555,8 @@ class EnhancedAgentOrchestrator:
         }
 
     async def _execute_architecture_phase(self, goal_text: str, goal_id: str) -> AsyncGenerator[Dict[str, Any], None]:
-        """Execute the architecture design phase"""
-        
-        # Create architect agent
+        """Execute the architecture design phase (no simulated progress)"""
         architect = await self.create_agent_instance(AgentType.ARCHITECT, goal_text)
-        
-        # Update status
         yield {
             "type": "agent_update",
             "data": {
@@ -676,50 +572,73 @@ class EnhancedAgentOrchestrator:
                 }
             }
         }
-        
-        # Simulate architecture work
-        for progress in [0.25, 0.5, 0.75, 1.0]:
-            await asyncio.sleep(1.5)
-            
-            yield {
-                "type": "agent_update",
-                "data": {
-                    "agent": {
-                        "id": architect.id,
-                        "name": architect.name,
-                        "type": architect.agent_type.value,
-                        "status": "active" if progress < 1.0 else "completed",
-                        "task": "Designing system architecture",
-                        "progress": progress,
-                        "created_at": architect.created_at,
-                        "updated_at": datetime.utcnow().isoformat()
+        # CrewAI-driven architecture design
+        if CREWAI_AVAILABLE and architect.crew_agent:
+            architecture_task = Task(
+                description=f"Design a robust, scalable architecture for the following goal: {goal_text}",
+                agent=architect.crew_agent,
+                expected_output="A detailed architecture diagram and description"
+            )
+            try:
+                crew = Crew(
+                    agents=[architect.crew_agent],
+                    tasks=[architecture_task],
+                    process=Process.sequential,
+                    verbose=True
+                )
+                result = await asyncio.get_event_loop().run_in_executor(None, crew.kickoff)
+                yield {
+                    "type": "output_update",
+                    "data": {
+                        "output": {
+                            "id": str(uuid.uuid4()),
+                            "goalId": goal_id,
+                            "type": "architecture",
+                            "title": "System Architecture Design",
+                            "content": str(result),
+                            "timestamp": datetime.utcnow().isoformat(),
+                            "agent_id": architect.id
+                        }
                     }
                 }
-            }
-        
-        # Generate architecture output
+            except Exception as e:
+                logger.error(f"Architecture phase failed: {e}")
+                yield {
+                    "type": "output_update",
+                    "data": {
+                        "output": {
+                            "id": str(uuid.uuid4()),
+                            "goalId": goal_id,
+                            "type": "error",
+                            "title": "Architecture Phase Error",
+                            "content": f"Architecture failed: {str(e)}",
+                            "timestamp": datetime.utcnow().isoformat(),
+                            "agent_id": architect.id
+                        }
+                    }
+                }
+        architect.status = "completed"
+        architect.progress = 1.0
+        architect.updated_at = datetime.utcnow().isoformat()
         yield {
-            "type": "output_update",
+            "type": "agent_update",
             "data": {
-                "output": {
-                    "id": str(uuid.uuid4()),
-                    "goalId": goal_id,
-                    "type": "architecture",
-                    "title": "System Architecture Design",
-                    "content": f"Architecture design completed for: {goal_text}",
-                    "timestamp": datetime.utcnow().isoformat(),
-                    "agent_id": architect.id
+                "agent": {
+                    "id": architect.id,
+                    "name": architect.name,
+                    "type": architect.agent_type.value,
+                    "status": "completed",
+                    "task": "Architecture design completed",
+                    "progress": 1.0,
+                    "created_at": architect.created_at,
+                    "updated_at": architect.updated_at
                 }
             }
         }
 
     async def _execute_implementation_phase(self, goal_text: str, goal_id: str) -> AsyncGenerator[Dict[str, Any], None]:
-        """Execute the implementation planning phase"""
-        
-        # Create code execution agent
+        """Execute the implementation planning phase (no simulated progress)"""
         coder = await self.create_agent_instance(AgentType.CODE_EXECUTOR, goal_text)
-        
-        # Update status and simulate work
         yield {
             "type": "agent_update",
             "data": {
@@ -735,50 +654,72 @@ class EnhancedAgentOrchestrator:
                 }
             }
         }
-        
-        # Simulate implementation planning
-        for progress in [0.33, 0.66, 1.0]:
-            await asyncio.sleep(1)
-            
-            yield {
-                "type": "agent_update",
-                "data": {
-                    "agent": {
-                        "id": coder.id,
-                        "name": coder.name,
-                        "type": coder.agent_type.value,
-                        "status": "active" if progress < 1.0 else "completed",
-                        "task": "Planning implementation strategy",
-                        "progress": progress,
-                        "created_at": coder.created_at,
-                        "updated_at": datetime.utcnow().isoformat()
+        if CREWAI_AVAILABLE and coder.crew_agent:
+            implementation_task = Task(
+                description=f"Plan and generate the implementation strategy for the following goal: {goal_text}",
+                agent=coder.crew_agent,
+                expected_output="A detailed implementation plan and code generation strategy"
+            )
+            try:
+                crew = Crew(
+                    agents=[coder.crew_agent],
+                    tasks=[implementation_task],
+                    process=Process.sequential,
+                    verbose=True
+                )
+                result = await asyncio.get_event_loop().run_in_executor(None, crew.kickoff)
+                yield {
+                    "type": "output_update",
+                    "data": {
+                        "output": {
+                            "id": str(uuid.uuid4()),
+                            "goalId": goal_id,
+                            "type": "implementation",
+                            "title": "Implementation Strategy",
+                            "content": str(result),
+                            "timestamp": datetime.utcnow().isoformat(),
+                            "agent_id": coder.id
+                        }
                     }
                 }
-            }
-        
-        # Generate implementation output
+            except Exception as e:
+                logger.error(f"Implementation phase failed: {e}")
+                yield {
+                    "type": "output_update",
+                    "data": {
+                        "output": {
+                            "id": str(uuid.uuid4()),
+                            "goalId": goal_id,
+                            "type": "error",
+                            "title": "Implementation Phase Error",
+                            "content": f"Implementation failed: {str(e)}",
+                            "timestamp": datetime.utcnow().isoformat(),
+                            "agent_id": coder.id
+                        }
+                    }
+                }
+        coder.status = "completed"
+        coder.progress = 1.0
+        coder.updated_at = datetime.utcnow().isoformat()
         yield {
-            "type": "output_update",
+            "type": "agent_update",
             "data": {
-                "output": {
-                    "id": str(uuid.uuid4()),
-                    "goalId": goal_id,
-                    "type": "implementation",
-                    "title": "Implementation Strategy",
-                    "content": f"Implementation plan created for: {goal_text}",
-                    "timestamp": datetime.utcnow().isoformat(),
-                    "agent_id": coder.id
+                "agent": {
+                    "id": coder.id,
+                    "name": coder.name,
+                    "type": coder.agent_type.value,
+                    "status": "completed",
+                    "task": "Implementation planning completed",
+                    "progress": 1.0,
+                    "created_at": coder.created_at,
+                    "updated_at": coder.updated_at
                 }
             }
         }
 
     async def _execute_documentation_phase(self, goal_text: str, goal_id: str) -> AsyncGenerator[Dict[str, Any], None]:
-        """Execute the documentation phase"""
-        
-        # Create documentation agent
+        """Execute the documentation phase (no simulated progress)"""
         doc_agent = await self.create_agent_instance(AgentType.DOCUMENTATION_GENERATOR, goal_text)
-        
-        # Update status and simulate work
         yield {
             "type": "agent_update",
             "data": {
@@ -794,197 +735,84 @@ class EnhancedAgentOrchestrator:
                 }
             }
         }
-        
-        # Simulate documentation work
-        for progress in [0.5, 1.0]:
-            await asyncio.sleep(1)
-            
-            yield {
-                "type": "agent_update",
-                "data": {
-                    "agent": {
-                        "id": doc_agent.id,
-                        "name": doc_agent.name,
-                        "type": doc_agent.agent_type.value,
-                        "status": "active" if progress < 1.0 else "completed",
-                        "task": "Generating documentation",
-                        "progress": progress,
-                        "created_at": doc_agent.created_at,
-                        "updated_at": datetime.utcnow().isoformat()
+        if CREWAI_AVAILABLE and doc_agent.crew_agent:
+            documentation_task = Task(
+                description=f"Generate comprehensive documentation for the following goal: {goal_text}",
+                agent=doc_agent.crew_agent,
+                expected_output="Comprehensive user and developer documentation"
+            )
+            try:
+                crew = Crew(
+                    agents=[doc_agent.crew_agent],
+                    tasks=[documentation_task],
+                    process=Process.sequential,
+                    verbose=True
+                )
+                result = await asyncio.get_event_loop().run_in_executor(None, crew.kickoff)
+                yield {
+                    "type": "output_update",
+                    "data": {
+                        "output": {
+                            "id": str(uuid.uuid4()),
+                            "goalId": goal_id,
+                            "type": "documentation",
+                            "title": "Documentation Generated",
+                            "content": str(result),
+                            "timestamp": datetime.utcnow().isoformat(),
+                            "agent_id": doc_agent.id
+                        }
                     }
                 }
-            }
-        
-        # Generate documentation output
+            except Exception as e:
+                logger.error(f"Documentation phase failed: {e}")
+                yield {
+                    "type": "output_update",
+                    "data": {
+                        "output": {
+                            "id": str(uuid.uuid4()),
+                            "goalId": goal_id,
+                            "type": "error",
+                            "title": "Documentation Phase Error",
+                            "content": f"Documentation failed: {str(e)}",
+                            "timestamp": datetime.utcnow().isoformat(),
+                            "agent_id": doc_agent.id
+                        }
+                    }
+                }
+        doc_agent.status = "completed"
+        doc_agent.progress = 1.0
+        doc_agent.updated_at = datetime.utcnow().isoformat()
         yield {
-            "type": "output_update",
+            "type": "agent_update",
             "data": {
-                "output": {
-                    "id": str(uuid.uuid4()),
-                    "goalId": goal_id,
-                    "type": "documentation",
-                    "title": "Documentation Generated",
-                    "content": f"Documentation created for: {goal_text}",
-                    "timestamp": datetime.utcnow().isoformat(),
-                    "agent_id": doc_agent.id
+                "agent": {
+                    "id": doc_agent.id,
+                    "name": doc_agent.name,
+                    "type": doc_agent.agent_type.value,
+                    "status": "completed",
+                    "task": "Documentation completed",
+                    "progress": 1.0,
+                    "created_at": doc_agent.created_at,
+                    "updated_at": doc_agent.updated_at
                 }
             }
         }
 
     # Maintain backward compatibility with existing process_goal method
     async def process_goal(self, goal_text: str, goal_id: str) -> AsyncGenerator[Dict[str, Any], None]:
-        """Process a goal using coordinated agents"""
-        try:
-            logger.info(f"Starting goal processing: {goal_id}")
-            
-            # Initial status update
-            yield {
-                "type": "goal_update",
-                "goal_id": goal_id,
-                "status": "analyzing"
-            }
-            
-            # Create planning agent
-            planner_agent = Agent(
-                id=str(uuid.uuid4()),
-                name="Planner Agent",
-                type="planner",
-                status="active",
-                task=f"Analyzing goal: {goal_text}",
-                created_at=datetime.utcnow().isoformat(),
-                updated_at=datetime.utcnow().isoformat()
-            )
-            
-            self.active_agents[planner_agent.id] = planner_agent
-            
-            yield {
-                "type": "agent_update",
-                "data": {
-                    "agent": {
-                        "id": planner_agent.id,
-                        "name": planner_agent.name,
-                        "type": planner_agent.type,
-                        "status": planner_agent.status,
-                        "task": planner_agent.task,
-                        "progress": planner_agent.progress,
-                        "created_at": planner_agent.created_at,
-                        "updated_at": planner_agent.updated_at
-                    }
-                }
-            }
-            
-            # Simulate planning phase
-            await asyncio.sleep(1)
-            planner_agent.progress = 0.5
-            planner_agent.updated_at = datetime.utcnow().isoformat()
-            
-            yield {
-                "type": "agent_update",
-                "data": {
-                    "agent": {
-                        "id": planner_agent.id,
-                        "name": planner_agent.name,
-                        "type": planner_agent.type,
-                        "status": planner_agent.status,
-                        "task": planner_agent.task,
-                        "progress": planner_agent.progress,
-                        "created_at": planner_agent.created_at,
-                        "updated_at": planner_agent.updated_at
-                    }
-                }
-            }
-            
-            # Generate output
-            yield {
-                "type": "output_update",
-                "data": {
-                    "output": {
-                        "id": str(uuid.uuid4()),
-                        "goalId": goal_id,
-                        "type": "analysis",
-                        "title": "Goal Analysis Complete",
-                        "content": f"Successfully analyzed goal: {goal_text}",
-                        "timestamp": datetime.utcnow().isoformat(),
-                        "agent_id": planner_agent.id
-                    }
-                }
-            }
-            
-            # Complete planning
-            planner_agent.progress = 1.0
-            planner_agent.status = "completed"
-            planner_agent.updated_at = datetime.utcnow().isoformat()
-            
-            yield {
-                "type": "agent_update",
-                "data": {
-                    "agent": {
-                        "id": planner_agent.id,
-                        "name": planner_agent.name,
-                        "type": planner_agent.type,
-                        "status": planner_agent.status,
-                        "task": planner_agent.task,
-                        "progress": planner_agent.progress,
-                        "created_at": planner_agent.created_at,
-                        "updated_at": planner_agent.updated_at
-                    }
-                }
-            }
-            
-            # Final status update
-            yield {
-                "type": "goal_update",
-                "goal_id": goal_id,
-                "status": "completed"
-            }
-            
-            logger.info(f"Goal processing completed: {goal_id}")
-            
-        except Exception as e:
-            logger.error(f"Goal processing failed for {goal_id}: {e}")
+        """Process a goal using CrewAI orchestration only (no legacy fallback)"""
+        if not CREWAI_AVAILABLE:
+            logger.error("CrewAI is not available. Cannot process goal.")
             yield {
                 "type": "goal_update",
                 "goal_id": goal_id,
                 "status": "error",
-                "error": str(e)
+                "error": "CrewAI is not available. Please install CrewAI and dependencies."
             }
-    
-    async def get_active_agents(self) -> List[Dict[str, Any]]:
-        """Get list of active agents"""
-        return [
-            {
-                "id": agent.id,
-                "name": agent.name,
-                "type": agent.type,
-                "status": agent.status,
-                "task": agent.task,
-                "progress": agent.progress,
-                "created_at": agent.created_at,
-                "updated_at": agent.updated_at
-            }
-            for agent in self.active_agents.values()
-        ]
-    
-    async def stop_agent(self, agent_id: str) -> bool:
-        """Stop a specific agent"""
-        if agent_id in self.active_agents:
-            agent = self.active_agents[agent_id]
-            agent.status = "stopped"
-            agent.updated_at = datetime.utcnow().isoformat()
-            logger.info(f"Agent stopped: {agent_id}")
-            return True
-        return False
-    
-    async def cleanup_completed_agents(self):
-        """Remove completed agents from active list"""
-        completed_agents = [
-            agent_id for agent_id, agent in self.active_agents.items()
-            if agent.status in ["completed", "stopped", "error"]
-        ]
-        
-        for agent_id in completed_agents:
-            del self.active_agents[agent_id]
-            logger.debug(f"Cleaned up completed agent: {agent_id}")
+            return
+        # Delegate to CrewAI-centric orchestration
+        async for update in self.process_goal_with_crewai(goal_text, goal_id):
+            yield update
     
     async def create_crew_session(self, 
                                 name: str, 
@@ -1014,7 +842,6 @@ class EnhancedAgentOrchestrator:
             self.crew_sessions[session_id] = session
             logger.info(f"Created crew session: {name} ({session_id})")
             await self._emit_event("crew_session_created", {"session_id": session_id, "name": name})
-            
             return session
             
         except Exception as e:
@@ -1223,3 +1050,20 @@ class EnhancedAgentOrchestrator:
             
         except Exception as e:
             logger.error(f"Error during shutdown: {e}")
+    
+    async def push_to_github(self, commit_message: str = "Update orchestrator state") -> bool:
+        """Push the current orchestrator state or code changes to GitHub (placeholder for integration)"""
+        # NOTE: Actual implementation requires repo URL, authentication, and gitpython or subprocess
+        try:
+            import subprocess
+            # Stage all changes
+            subprocess.run(["git", "add", "-A"], check=True)
+            # Commit
+            subprocess.run(["git", "commit", "-m", commit_message], check=True)
+            # Push
+            subprocess.run(["git", "push"], check=True)
+            logger.info("Successfully pushed orchestrator state to GitHub.")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to push to GitHub: {e}")
+            return False

@@ -321,12 +321,29 @@ class EnhancedAgentOrchestrator:
         return capabilities_map.get(agent_type, [])
     
     def _get_agent_tools(self, agent_type: AgentType) -> List[str]:
-        """Get tools required for each agent type"""
+        """Get tools required for each agent type (granular, metadata-driven)"""
         tools_map = {
-            AgentType.ARCHITECT: ["architecture_analyzer"],
-            AgentType.CODE_EXECUTOR: ["code_generator"],
-            AgentType.CLOUD_DEPLOYER: ["infrastructure_provisioner"],
-            AgentType.QUALITY_ASSURANCE: ["quality_assurance"],
+            AgentType.ARCHITECT: [
+                "architecture_analyzer", "technology_stack_analyzer", "system_boundary_definition_tool",
+                "data_flow_design_tool", "security_architecture_tool", "performance_modeling_tool"
+            ],
+            AgentType.PLANNER: [
+                "llm_planning_tool", "task_dependency_tool", "project_scoping_tool",
+                "resource_estimation_tool", "plan_validation_tool"
+            ],
+            AgentType.CODE_EXECUTOR: [
+                "open_interpreter_execution_tool", "file_linter_tool", "static_analysis_tool",
+                "code_generator", "dockerfile_validator_tool", "code_testing_tool"
+            ],
+            AgentType.CLOUD_DEPLOYER: [
+                "infrastructure_provisioner", "terraform_generation_tool", "deployment_validation_tool",
+                "cost_optimization_tool", "security_configuration_tool", "monitoring_setup_tool"
+            ],
+            AgentType.QUALITY_ASSURANCE: [
+                "quality_assurance", "pytest_execution_tool", "api_test_client_tool",
+                "load_testing_tool", "security_testing_tool", "integration_test_tool"
+            ],
+            # Add more agent-tool mappings as needed
         }
         return tools_map.get(agent_type, [])
 
