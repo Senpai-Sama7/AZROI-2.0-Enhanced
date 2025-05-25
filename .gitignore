@@ -86,3 +86,21 @@ Thumbs.db
 
 .python_packages
 .venv
+# Secrets and API keys
+*.key
+*.pem
+.env.local
+.env.production
+secrets/
+config/secrets.json
+**/secrets/**
+
+# Azure specific
+.azure/
+local.settings.json
+*.publishsettings
+
+# Python secrets
+secret_*.py
+keys_*.py
+
