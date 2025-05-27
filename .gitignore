@@ -104,3 +104,4 @@ local.settings.json
 secret_*.py
 keys_*.py
 
+..bfg-report/
