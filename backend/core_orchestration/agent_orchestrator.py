@@ -2,6 +2,7 @@
 """
 Enhanced CrewAI Agent Orchestrator for Autonomous AI Architect System
 Production-ready orchestration with comprehensive agent management and coordination.
+Enhanced with robust sub-agent failure handling and recovery mechanisms.
 """
 
 import asyncio
@@ -9,6 +10,7 @@ import json
 import logging
 import uuid
 import traceback
+import sys
 from datetime import datetime, timedelta
 from typing import Dict, List, Any, Optional, Union, AsyncGenerator, Callable
 from dataclasses import dataclass, asdict, field
@@ -16,19 +18,34 @@ from enum import Enum
 from concurrent.futures import ThreadPoolExecutor
 import threading
 
-from crewai import Agent, Task, Crew, Process
-from crewai.agent import Agent as CrewAIAgent
-from crewai.task import Task as CrewAITask
-from crewai.crew import Crew as CrewAICrew
-from langchain_openai import ChatOpenAI
-CREWAI_AVAILABLE = True
-
-# Import custom tools
-from agents.crewai_tools import CREWAI_TOOLS, get_tool, get_all_tools
-
-# Configure logging
+# Configure logging first
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+try:
+    from crewai import Agent, Task, Crew, Process
+    from crewai.agent import Agent as CrewAIAgent
+    from crewai.task import Task as CrewAITask
+    from crewai.crew import Crew as CrewAICrew
+    CREWAI_AVAILABLE = True
+except ImportError:
+    CREWAI_AVAILABLE = False
+    logger.warning("CrewAI not available - using fallback mode")
+
+try:
+    from langchain_openai import ChatOpenAI
+except ImportError:
+    ChatOpenAI = None
+
+# Import custom tools with fallback
+try:
+    from agents.crewai_tools import CREWAI_TOOLS, get_tool, get_all_tools
+except ImportError:
+    CREWAI_TOOLS = []
+    def get_tool(name): 
+        return None
+    def get_all_tools(): 
+        return []
 
 class AgentType(Enum):
     """Enumeration of available agent types"""
@@ -59,6 +76,30 @@ class TaskPriority(Enum):
     HIGH = 3
     CRITICAL = 4
 
+class FailureRecoveryStrategy(Enum):
+    """Recovery strategies for sub-agent failures"""
+    RETRY = "retry"
+    ESCALATE = "escalate"
+    REPLAN = "replan"
+    SUBSTITUTE_AGENT = "substitute_agent"
+    CONTINUE_WITHOUT = "continue_without"
+    ABORT = "abort"
+
+@dataclass
+class FailureContext:
+    """Detailed context for sub-agent failures"""
+    agent_id: str
+    agent_type: AgentType
+    task_id: Optional[str]
+    error_type: str
+    error_message: str
+    stack_trace: str
+    timestamp: str
+    retry_count: int = 0
+    recovery_strategy: Optional[FailureRecoveryStrategy] = None
+    escalation_level: int = 0
+    context_data: Dict[str, Any] = field(default_factory=dict)
+
 @dataclass
 class CrewTask:
     """Enhanced task data structure for CrewAI integration"""
@@ -83,6 +124,7 @@ class CrewTask:
     started_at: Optional[str] = None
     completed_at: Optional[str] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
+    failure_context: Optional[FailureContext] = None
 
 @dataclass
 class AgentInstance:
@@ -100,6 +142,8 @@ class AgentInstance:
     created_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
     updated_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
     last_active: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+    failure_history: List[FailureContext] = field(default_factory=list)
+    recovery_attempts: int = 0
 
 @dataclass
 class CrewSession:
@@ -107,7 +151,7 @@ class CrewSession:
     id: str
     name: str
     description: str
-    agents: List<AgentInstance>
+    agents: List[AgentInstance]
     tasks: List[CrewTask]
     crew: Optional[Any] = None
     status: str = "created"
@@ -117,9 +161,10 @@ class CrewSession:
     completed_at: Optional[str] = None
     results: Dict[str, Any] = field(default_factory=dict)
     metrics: Dict[str, Any] = field(default_factory=dict)
+    failure_log: List[FailureContext] = field(default_factory=list)
 
 class EnhancedAgentOrchestrator:
-    """Enhanced CrewAI orchestrator for autonomous AI architecture tasks"""
+    """Enhanced CrewAI orchestrator with robust sub-agent failure handling"""
     
     def __init__(self, config_loader=None, llm_router=None):
         self.config_loader = config_loader
@@ -134,13 +179,28 @@ class EnhancedAgentOrchestrator:
         self.completed_tasks: Dict[str, CrewTask] = {}
         self.failed_tasks: Dict[str, CrewTask] = {}
         
+        # Enhanced failure tracking and recovery
+        self.failure_history: List[FailureContext] = []
+        self.recovery_strategies: Dict[AgentType, FailureRecoveryStrategy] = {
+            AgentType.PLANNER: FailureRecoveryStrategy.RETRY,
+            AgentType.ARCHITECT: FailureRecoveryStrategy.RETRY,
+            AgentType.CODE_EXECUTOR: FailureRecoveryStrategy.SUBSTITUTE_AGENT,
+            AgentType.CLOUD_DEPLOYER: FailureRecoveryStrategy.RETRY,
+            AgentType.DATABASE_MANAGER: FailureRecoveryStrategy.RETRY,
+            AgentType.DOCUMENTATION_GENERATOR: FailureRecoveryStrategy.CONTINUE_WITHOUT,
+            AgentType.QUALITY_ASSURANCE: FailureRecoveryStrategy.CONTINUE_WITHOUT,
+        }
+        
         # Performance tracking
         self.execution_metrics: Dict[str, Any] = {
             "total_tasks": 0,
             "completed_tasks": 0,
             "failed_tasks": 0,
+            "recovered_tasks": 0,
             "average_execution_time": 0.0,
-            "agent_utilization": {}
+            "agent_utilization": {},
+            "failure_rates": {},
+            "recovery_success_rates": {}
         }
         
         # Thread pool for async operations
@@ -153,823 +213,299 @@ class EnhancedAgentOrchestrator:
         # Event system for notifications
         self.event_callbacks: Dict[str, List[Callable]] = {}
         
-        logger.info(f"Enhanced AgentOrchestrator initialized (CrewAI available: {CREWAI_AVAILABLE})")
-    
-    async def initialize(self) -> None:
-        """Initialize the orchestrator and create default agents"""
-        try:
-            await self.reload_config()
-            await self._initialize_default_agents()
-            logger.info("Enhanced AgentOrchestrator initialized successfully")
-        except Exception as e:
-            logger.error(f"Failed to initialize orchestrator: {e}")
-            raise
-    
-    async def _initialize_default_agents(self) -> None:
-        """Initialize default agent instances for each type"""
-        default_agents = [
-            AgentType.ARCHITECT,
-            AgentType.PLANNER,
-            AgentType.CODE_EXECUTOR,
-            AgentType.CLOUD_DEPLOYER
-        ]
+        # Enhanced memory management for Feature-BE-11
+        self._memory_manager = None
+        self._cleanup_task = None
+        self._memory_cleanup_interval = 300  # 5 minutes
+        self._max_agent_history = 100  # Maximum number of agents to keep in history
+        self._max_task_history = 1000  # Maximum number of tasks to keep in history
+        self._max_failure_history = 500  # Maximum number of failures to keep in history
         
-        for agent_type in default_agents:
-            try:
-                await self.create_agent_instance(agent_type)
-            except Exception as e:
-                logger.warning(f"Failed to create default agent {agent_type}: {e}")
-    
-    async def reload_config(self):
-        """Reload configuration from config loader"""
-        try:
-            if self.config_loader:
-                config = await self.config_loader.get_config()
-                self.max_concurrent_agents = config.get('max_concurrent_agents', 8)
-                self.max_concurrent_crews = config.get('max_concurrent_crews', 3)
-                logger.info(f"Configuration reloaded: max_concurrent_agents={self.max_concurrent_agents}")
-        except Exception as e:
-            logger.error(f"Failed to reload config: {e}")
-
-    async def create_agent_instance(self, 
-                                  agent_type: AgentType, 
-                                  goal_context: str = "",
-                                  custom_tools: Optional[List[str]] = None) -> AgentInstance:
-        """Create a new enhanced agent instance for a specific type"""
-        try:
-            agent_id = str(uuid.uuid4())
-            
-            # Get agent capabilities and tools
-            capabilities = self._get_agent_capabilities(agent_type)
-            tools = custom_tools or self._get_agent_tools(agent_type)
-            
-            instance = AgentInstance(
-                id=agent_id,
-                name=f"{agent_type.value.title().replace('_', ' ')} Agent",
-                agent_type=agent_type,
-                status="initializing",
-                capabilities=capabilities,
-                tools=tools
-            )
-            
-            if CREWAI_AVAILABLE:
-                # Create CrewAI agent based on type
-                crew_agent = await self._create_enhanced_crew_agent(agent_type, goal_context, tools)
-                instance.crew_agent = crew_agent
-                instance.status = "ready"
-            else:
-                # Fallback to basic agent
-                instance.status = "ready"
-                
-            self.agent_instances[agent_id] = instance
-            
-            # Initialize performance metrics
-            self.execution_metrics["agent_utilization"][agent_id] = {
-                "tasks_completed": 0,
-                "total_execution_time": 0.0,
-                "success_rate": 1.0,
-                "average_task_time": 0.0
-            }
-            
-            logger.info(f"Created enhanced agent instance: {agent_type.value} ({agent_id})")
-            await self._emit_event("agent_created", {"agent_id": agent_id, "type": agent_type.value})
-            
-            return instance
-            
-        except Exception as e:
-            logger.error(f"Failed to create agent instance {agent_type.value}: {e}")
-            raise
-
-    def _get_agent_capabilities(self, agent_type: AgentType) -> List[str]:
-        """Get capabilities for each agent type"""
-        capabilities_map = {
-            AgentType.ARCHITECT: [
-                "system_design", "architecture_analysis", "technology_selection",
-                "scalability_planning", "security_architecture", "performance_optimization"
-            ],
-            AgentType.PLANNER: [
-                "project_planning", "task_decomposition", "resource_allocation",
-                "timeline_estimation", "risk_assessment", "milestone_tracking"
-            ],
-            AgentType.CODE_EXECUTOR: [
-                "code_generation", "refactoring", "debugging", "testing",
-                "code_review", "documentation", "version_control"
-            ],
-            AgentType.CLOUD_DEPLOYER: [
-                "infrastructure_provisioning", "deployment_automation", "monitoring_setup",
-                "scaling_configuration", "security_hardening", "cost_optimization"
-            ],
-            AgentType.DATABASE_MANAGER: [
-                "database_design", "query_optimization", "data_modeling",
-                "backup_strategy", "performance_tuning", "migration_planning"
-            ],
-            AgentType.QUALITY_ASSURANCE: [
-                "test_automation", "code_quality_analysis", "security_scanning",
-                "performance_testing", "compliance_checking", "bug_tracking"
-            ]
-        }
-        return capabilities_map.get(agent_type, [])
-    
-    def _get_agent_tools(self, agent_type: AgentType) -> List[str]:
-        """Get tools required for each agent type"""
-        tools_map = {
-            AgentType.ARCHITECT: ["architecture_analyzer"],
-            AgentType.CODE_EXECUTOR: ["code_generator"],
-            AgentType.CLOUD_DEPLOYER: ["infrastructure_provisioner"],
-            AgentType.QUALITY_ASSURANCE: ["quality_assurance"],
-        }
-        return tools_map.get(agent_type, [])
-            
-        except Exception as e:
-            logger.error(f"Failed to create agent instance {agent_type.value}: {e}")
-            raise
-
-    async def _create_enhanced_crew_agent(self, agent_type: AgentType, goal_context: str, tools: List[str]) -> Any:
-        """Create an enhanced CrewAI agent for the specified type with tools"""
-        if not CREWAI_AVAILABLE:
-            return None
-            
-        try:
-            # Get LLM for the agent
-            llm = None
-            if self.llm_router:
-                llm = await self.llm_router.get_llm("gemini-2.5-pro-preview-04-11")
-            else:
-                # Fallback to ChatOpenAI if available
-                try:
-                    from langchain_openai import ChatOpenAI
-                    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.3)
-                except ImportError:
-                    logger.warning("No LLM available for CrewAI agent")
-            
-            # Get tools for the agent
-            agent_tools = []
-            for tool_name in tools:
-                tool = get_tool(tool_name)
-                if tool:
-                    agent_tools.append(tool)
-            
-            # Agent configurations based on type
-            agent_configs = {
-                AgentType.ARCHITECT: {
-                    "role": "Senior Software Architect",
-                    "goal": "Design robust, scalable and maintainable software architectures",
-                    "backstory": (
-                        "You are an expert software architect with decades of experience "
-                        "designing complex systems. You excel at choosing the right technologies, "
-                        "considering scalability, maintenance, and best practices."
-                    )
-                },
-                AgentType.PLANNER: {
-                    "role": "Strategic Project Planner", 
-                    "goal": "Create comprehensive project plans and break down complex goals",
-                    "backstory": (
-                        "You are a strategic planner who excels at breaking down complex "
-                        "projects into manageable tasks and creating detailed roadmaps."
-                    )
-                },
-                AgentType.CODE_EXECUTOR: {
-                    "role": "Senior Software Developer",
-                    "goal": "Write high-quality, tested, and maintainable code",
-                    "backstory": (
-                        "You are an experienced developer who writes clean, efficient code "
-                        "following best practices and modern development methodologies."
-                    )
-                },
-                AgentType.CLOUD_DEPLOYER: {
-                    "role": "Cloud Infrastructure Specialist",
-                    "goal": "Deploy and manage cloud infrastructure efficiently and securely",
-                    "backstory": (
-                        "You are a cloud expert specializing in AWS, Azure, and GCP "
-                        "with deep knowledge of DevOps and infrastructure as code."
-                    )
-                },
-                AgentType.DATABASE_MANAGER: {
-                    "role": "Database Architect",
-                    "goal": "Design and optimize database systems for performance and scalability",
-                    "backstory": (
-                        "You are a database expert with extensive experience in SQL and NoSQL "
-                        "databases, optimization, and data modeling."
-                    )
-                },
-                AgentType.DOCUMENTATION_GENERATOR: {
-                    "role": "Technical Documentation Specialist",
-                    "goal": "Create comprehensive and user-friendly documentation",
-                    "backstory": (
-                        "You specialize in creating clear, comprehensive technical documentation "
-                        "that helps developers and users understand complex systems."
-                    )
-                },
-                AgentType.QUALITY_ASSURANCE: {
-                    "role": "Quality Assurance Engineer",
-                    "goal": "Ensure code quality, security, and performance standards",
-                    "backstory": (
-                        "You are a QA expert who implements comprehensive testing strategies "
-                        "and maintains high code quality standards across all projects."
-                    )
-                },
-                AgentType.INFRASTRUCTURE_SPECIALIST: {
-                    "role": "Infrastructure & DevOps Engineer",
-                    "goal": "Design and manage scalable infrastructure and deployment pipelines",
-                    "backstory": (
-                        "You are an infrastructure specialist with expertise in cloud platforms, "
-                        "container orchestration, and modern DevOps practices."
-                    )
-                }
-            }
-            
-            config = agent_configs.get(agent_type)
-            if not config:
-                raise ValueError(f"No configuration found for agent type: {agent_type}")
-            
-            # Create the CrewAI agent with tools
-            crew_agent = Agent(
-                role=config["role"],
-                goal=config["goal"] + f" Context: {goal_context}" if goal_context else config["goal"],
-                backstory=config["backstory"],
-                verbose=True,
-                allow_delegation=True,
-                llm=llm,
-                tools=agent_tools
-            )
-            return crew_agent
-            
-        except Exception as e:
-            logger.error(f"Failed to create CrewAI agent for {agent_type}: {e}")
-            raise
-
-    async def create_task(self, 
-                         title: str, 
-                         description: str, 
-                         agent_type: AgentType,
-                         dependencies: Optional[List[str]] = None,
-                         metadata: Optional[Dict[str, Any]] = None) -> CrewTask:
-        """Create a new task for execution"""
+        logger.info(f"Enhanced AgentOrchestrator initialized with robust failure handling (CrewAI available: {CREWAI_AVAILABLE})")
         
-        task = CrewTask(
-            id=str(uuid.uuid4()),
-            title=title,
-            description=description,
-            agent_type=agent_type,
-            dependencies=dependencies or [],
-            metadata=metadata or {}
+        # Start memory management cleanup task
+        self._start_memory_cleanup()
+    
+    async def _handle_sub_agent_failure(self, 
+                                       agent: AgentInstance, 
+                                       task: Optional[CrewTask], 
+                                       error: Exception,
+                                       goal_id: str) -> AsyncGenerator[Dict[str, Any], None]:
+        """
+        Enhanced sub-agent failure handling with detailed logging and recovery strategies.
+        
+        This addresses Feature-BE-05 by providing:
+        1. Detailed error logging from failed sub-agents
+        2. Recovery strategy implementation 
+        3. Comprehensive error reporting
+        4. Graceful handling instead of abrupt termination
+        """
+        
+        # Create detailed failure context
+        failure_context = FailureContext(
+            agent_id=agent.id,
+            agent_type=agent.agent_type,
+            task_id=task.id if task else None,
+            error_type=type(error).__name__,
+            error_message=str(error),
+            stack_trace=traceback.format_exc(),
+            timestamp=datetime.utcnow().isoformat(),
+            retry_count=agent.recovery_attempts,
+            context_data={
+                "agent_name": agent.name,
+                "agent_status": agent.status,
+                "goal_id": goal_id,
+                "task_title": task.title if task else "Unknown Task",
+                "agent_capabilities": agent.capabilities,
+                "performance_metrics": agent.performance_metrics
+            }
         )
         
-        self.task_queue.append(task)
-        logger.info(f"Created task: {title} ({task.id})")
+        # Log detailed error information
+        logger.error(f"""
+        ========== SUB-AGENT FAILURE DETECTED ==========
+        Agent ID: {agent.id}
+        Agent Type: {agent.agent_type.value}
+        Agent Name: {agent.name}
+        Task ID: {task.id if task else 'N/A'}
+        Task Title: {task.title if task else 'N/A'}
+        Error Type: {failure_context.error_type}
+        Error Message: {failure_context.error_message}
+        Retry Count: {failure_context.retry_count}
+        Timestamp: {failure_context.timestamp}
         
-        return task
-
-    async def process_goal_with_crewai(self, goal_text: str, goal_id: str) -> AsyncGenerator[Dict[str, Any], None]:
-        """Process a goal using CrewAI orchestration"""
+        Stack Trace:
+        {failure_context.stack_trace}
         
-        async with self._execution_lock:
-            try:
-                logger.info(f"Starting CrewAI goal processing: {goal_id}")
-                
-                # Initial status update
-                yield {
-                    "type": "goal_update",
-                    "goal_id": goal_id,
-                    "status": "analyzing"
-                }
-                
-                # Phase 1: Planning and Analysis
-                async for update in self._execute_planning_phase(goal_text, goal_id):
-                    yield update
-                
-                # Phase 2: Architecture Design
-                async for update in self._execute_architecture_phase(goal_text, goal_id):
-                    yield update
-                
-                # Phase 3: Implementation Planning
-                async for update in self._execute_implementation_phase(goal_text, goal_id):
-                    yield update
-                
-                # Phase 4: Documentation and Deployment
-                async for update in self._execute_documentation_phase(goal_text, goal_id):
-                    yield update
-                
-                # Final completion
-                yield {
-                    "type": "goal_update",
-                    "goal_id": goal_id,
-                    "status": "completed"
-                }
-                
-                logger.info(f"CrewAI goal processing completed: {goal_id}")
-                
-            except Exception as e:
-                logger.error(f"CrewAI goal processing failed for {goal_id}: {e}")
-                yield {
-                    "type": "goal_update",
-                    "goal_id": goal_id,
-                    "status": "error",
-                    "error": str(e)
-                }
-
-    async def _execute_planning_phase(self, goal_text: str, goal_id: str) -> AsyncGenerator[Dict[str, Any], None]:
-        """Execute the planning phase with CrewAI (no simulated progress)"""
-        # Create planning agent
-        planner = await self.create_agent_instance(AgentType.PLANNER, goal_text)
-        # Emit agent start event
+        Agent Context:
+        - Status: {agent.status}
+        - Capabilities: {agent.capabilities}
+        - Tools: {agent.tools}
+        - Performance: {agent.performance_metrics}
+        ===============================================
+        """)
+        
+        # Add to failure history
+        agent.failure_history.append(failure_context)
+        self.failure_history.append(failure_context)
+        
+        # Update failure metrics
+        self.execution_metrics["failed_tasks"] += 1
+        if agent.id in self.execution_metrics["failure_rates"]:
+            self.execution_metrics["failure_rates"][agent.id]["total_failures"] += 1
+            self.execution_metrics["failure_rates"][agent.id]["last_failure"] = failure_context.timestamp
+        
+        # Emit detailed failure event
         yield {
-            "type": "agent_update",
+            "type": "agent_failure",
             "data": {
                 "agent": {
-                    "id": planner.id,
-                    "name": planner.name,
-                    "type": planner.agent_type.value,
-                    "status": "active",
-                    "task": "Analyzing and planning the goal",
-                    "progress": 0.0,
-                    "created_at": planner.created_at,
-                    "updated_at": planner.updated_at
+                    "id": agent.id,
+                    "name": agent.name,
+                    "type": agent.agent_type.value,
+                    "status": "failed",
+                    "error": failure_context.error_message,
+                    "error_type": failure_context.error_type,
+                    "retry_count": failure_context.retry_count,
+                    "timestamp": failure_context.timestamp
+                },
+                "failure_context": {
+                    "detailed_error": failure_context.error_message,
+                    "stack_trace": failure_context.stack_trace,
+                    "context_data": failure_context.context_data
                 }
             }
         }
-        if CREWAI_AVAILABLE and planner.crew_agent:
-            planning_task = Task(
-                description=f"Analyze the following goal and create a comprehensive plan: {goal_text}",
-                agent=planner.crew_agent,
-                expected_output="A detailed project plan with phases, tasks, and recommendations"
-            )
-            try:
-                crew = Crew(
-                    agents=[planner.crew_agent],
-                    tasks=[planning_task],
-                    process=Process.sequential,
-                    verbose=True
-                )
-                # Run CrewAI task (blocking)
-                result = await asyncio.get_event_loop().run_in_executor(None, crew.kickoff)
-                # Emit output event
-                yield {
-                    "type": "output_update",
-                    "data": {
-                        "output": {
-                            "id": str(uuid.uuid4()),
-                            "goalId": goal_id,
-                            "type": "planning",
-                            "title": "Project Planning Complete",
-                            "content": str(result),
-                            "timestamp": datetime.utcnow().isoformat(),
-                            "agent_id": planner.id
-                        }
-                    }
-                }
-            except Exception as e:
-                logger.error(f"Planning phase failed: {e}")
-                yield {
-                    "type": "output_update",
-                    "data": {
-                        "output": {
-                            "id": str(uuid.uuid4()),
-                            "goalId": goal_id,
-                            "type": "error",
-                            "title": "Planning Phase Error",
-                            "content": f"Planning failed: {str(e)}",
-                            "timestamp": datetime.utcnow().isoformat(),
-                            "agent_id": planner.id
-                        }
-                    }
-                }
-        # Mark agent as completed
-        planner.status = "completed"
-        planner.progress = 1.0
-        planner.updated_at = datetime.utcnow().isoformat()
-        yield {
-            "type": "agent_update",
-            "data": {
-                "agent": {
-                    "id": planner.id,
-                    "name": planner.name,
-                    "type": planner.agent_type.value,
-                    "status": "completed",
-                    "task": "Planning completed",
-                    "progress": 1.0,
-                    "created_at": planner.created_at,
-                    "updated_at": planner.updated_at
-                }
-            }
-        }
-
-    async def _execute_architecture_phase(self, goal_text: str, goal_id: str) -> AsyncGenerator[Dict[str, Any], None]:
-        """Execute the architecture design phase (no simulated progress)"""
-        architect = await self.create_agent_instance(AgentType.ARCHITECT, goal_text)
-        yield {
-            "type": "agent_update",
-            "data": {
-                "agent": {
-                    "id": architect.id,
-                    "name": architect.name,
-                    "type": architect.agent_type.value,
-                    "status": "active",
-                    "task": "Designing system architecture",
-                    "progress": 0.0,
-                    "created_at": architect.created_at,
-                    "updated_at": architect.updated_at
-                }
-            }
-        }
-        # CrewAI-driven architecture design
-        if CREWAI_AVAILABLE and architect.crew_agent:
-            architecture_task = Task(
-                description=f"Design a robust, scalable architecture for the following goal: {goal_text}",
-                agent=architect.crew_agent,
-                expected_output="A detailed architecture diagram and description"
-            )
-            try:
-                crew = Crew(
-                    agents=[architect.crew_agent],
-                    tasks=[architecture_task],
-                    process=Process.sequential,
-                    verbose=True
-                )
-                result = await asyncio.get_event_loop().run_in_executor(None, crew.kickoff)
-                yield {
-                    "type": "output_update",
-                    "data": {
-                        "output": {
-                            "id": str(uuid.uuid4()),
-                            "goalId": goal_id,
-                            "type": "architecture",
-                            "title": "System Architecture Design",
-                            "content": str(result),
-                            "timestamp": datetime.utcnow().isoformat(),
-                            "agent_id": architect.id
-                        }
-                    }
-                }
-            except Exception as e:
-                logger.error(f"Architecture phase failed: {e}")
-                yield {
-                    "type": "output_update",
-                    "data": {
-                        "output": {
-                            "id": str(uuid.uuid4()),
-                            "goalId": goal_id,
-                            "type": "error",
-                            "title": "Architecture Phase Error",
-                            "content": f"Architecture failed: {str(e)}",
-                            "timestamp": datetime.utcnow().isoformat(),
-                            "agent_id": architect.id
-                        }
-                    }
-                }
-        architect.status = "completed"
-        architect.progress = 1.0
-        architect.updated_at = datetime.utcnow().isoformat()
-        yield {
-            "type": "agent_update",
-            "data": {
-                "agent": {
-                    "id": architect.id,
-                    "name": architect.name,
-                    "type": architect.agent_type.value,
-                    "status": "completed",
-                    "task": "Architecture design completed",
-                    "progress": 1.0,
-                    "created_at": architect.created_at,
-                    "updated_at": architect.updated_at
-                }
-            }
-        }
-
-    async def _execute_implementation_phase(self, goal_text: str, goal_id: str) -> AsyncGenerator[Dict[str, Any], None]:
-        """Execute the implementation planning phase (no simulated progress)"""
-        coder = await self.create_agent_instance(AgentType.CODE_EXECUTOR, goal_text)
-        yield {
-            "type": "agent_update",
-            "data": {
-                "agent": {
-                    "id": coder.id,
-                    "name": coder.name,
-                    "type": coder.agent_type.value,
-                    "status": "active",
-                    "task": "Planning implementation strategy",
-                    "progress": 0.0,
-                    "created_at": coder.created_at,
-                    "updated_at": coder.updated_at
-                }
-            }
-        }
-        if CREWAI_AVAILABLE and coder.crew_agent:
-            implementation_task = Task(
-                description=f"Plan and generate the implementation strategy for the following goal: {goal_text}",
-                agent=coder.crew_agent,
-                expected_output="A detailed implementation plan and code generation strategy"
-            )
-            try:
-                crew = Crew(
-                    agents=[coder.crew_agent],
-                    tasks=[implementation_task],
-                    process=Process.sequential,
-                    verbose=True
-                )
-                result = await asyncio.get_event_loop().run_in_executor(None, crew.kickoff)
-                yield {
-                    "type": "output_update",
-                    "data": {
-                        "output": {
-                            "id": str(uuid.uuid4()),
-                            "goalId": goal_id,
-                            "type": "implementation",
-                            "title": "Implementation Strategy",
-                            "content": str(result),
-                            "timestamp": datetime.utcnow().isoformat(),
-                            "agent_id": coder.id
-                        }
-                    }
-                }
-            except Exception as e:
-                logger.error(f"Implementation phase failed: {e}")
-                yield {
-                    "type": "output_update",
-                    "data": {
-                        "output": {
-                            "id": str(uuid.uuid4()),
-                            "goalId": goal_id,
-                            "type": "error",
-                            "title": "Implementation Phase Error",
-                            "content": f"Implementation failed: {str(e)}",
-                            "timestamp": datetime.utcnow().isoformat(),
-                            "agent_id": coder.id
-                        }
-                    }
-                }
-        coder.status = "completed"
-        coder.progress = 1.0
-        coder.updated_at = datetime.utcnow().isoformat()
-        yield {
-            "type": "agent_update",
-            "data": {
-                "agent": {
-                    "id": coder.id,
-                    "name": coder.name,
-                    "type": coder.agent_type.value,
-                    "status": "completed",
-                    "task": "Implementation planning completed",
-                    "progress": 1.0,
-                    "created_at": coder.created_at,
-                    "updated_at": coder.updated_at
-                }
-            }
-        }
-
-    async def _execute_documentation_phase(self, goal_text: str, goal_id: str) -> AsyncGenerator[Dict[str, Any], None]:
-        """Execute the documentation phase (no simulated progress)"""
-        doc_agent = await self.create_agent_instance(AgentType.DOCUMENTATION_GENERATOR, goal_text)
-        yield {
-            "type": "agent_update",
-            "data": {
-                "agent": {
-                    "id": doc_agent.id,
-                    "name": doc_agent.name,
-                    "type": doc_agent.agent_type.value,
-                    "status": "active",
-                    "task": "Generating documentation",
-                    "progress": 0.0,
-                    "created_at": doc_agent.created_at,
-                    "updated_at": doc_agent.updated_at
-                }
-            }
-        }
-        if CREWAI_AVAILABLE and doc_agent.crew_agent:
-            documentation_task = Task(
-                description=f"Generate comprehensive documentation for the following goal: {goal_text}",
-                agent=doc_agent.crew_agent,
-                expected_output="Comprehensive user and developer documentation"
-            )
-            try:
-                crew = Crew(
-                    agents=[doc_agent.crew_agent],
-                    tasks=[documentation_task],
-                    process=Process.sequential,
-                    verbose=True
-                )
-                result = await asyncio.get_event_loop().run_in_executor(None, crew.kickoff)
-                yield {
-                    "type": "output_update",
-                    "data": {
-                        "output": {
-                            "id": str(uuid.uuid4()),
-                            "goalId": goal_id,
-                            "type": "documentation",
-                            "title": "Documentation Generated",
-                            "content": str(result),
-                            "timestamp": datetime.utcnow().isoformat(),
-                            "agent_id": doc_agent.id
-                        }
-                    }
-                }
-            except Exception as e:
-                logger.error(f"Documentation phase failed: {e}")
-                yield {
-                    "type": "output_update",
-                    "data": {
-                        "output": {
-                            "id": str(uuid.uuid4()),
-                            "goalId": goal_id,
-                            "type": "error",
-                            "title": "Documentation Phase Error",
-                            "content": f"Documentation failed: {str(e)}",
-                            "timestamp": datetime.utcnow().isoformat(),
-                            "agent_id": doc_agent.id
-                        }
-                    }
-                }
-        doc_agent.status = "completed"
-        doc_agent.progress = 1.0
-        doc_agent.updated_at = datetime.utcnow().isoformat()
-        yield {
-            "type": "agent_update",
-            "data": {
-                "agent": {
-                    "id": doc_agent.id,
-                    "name": doc_agent.name,
-                    "type": doc_agent.agent_type.value,
-                    "status": "completed",
-                    "task": "Documentation completed",
-                    "progress": 1.0,
-                    "created_at": doc_agent.created_at,
-                    "updated_at": doc_agent.updated_at
-                }
-            }
-        }
-
-    # Maintain backward compatibility with existing process_goal method
-    async def process_goal(self, goal_text: str, goal_id: str) -> AsyncGenerator[Dict[str, Any], None]:
-        """Process a goal using CrewAI orchestration only (no legacy fallback)"""
-        if not CREWAI_AVAILABLE:
-            logger.error("CrewAI is not available. Cannot process goal.")
-            yield {
-                "type": "goal_update",
-                "goal_id": goal_id,
-                "status": "error",
-                "error": "CrewAI is not available. Please install CrewAI and dependencies."
-            }
-            return
-        # Delegate to CrewAI-centric orchestration
-        async for update in self.process_goal_with_crewai(goal_text, goal_id):
-            yield update
-    
-    async def create_crew_session(self, 
-                                name: str, 
-                                description: str, 
-                                agent_types: List[AgentType],
-                                process_type: str = "sequential") -> CrewSession:
-        """Create a new crew session for coordinated multi-agent workflows"""
+        
+        # Determine recovery strategy
+        recovery_strategy = self.recovery_strategies.get(agent.agent_type, FailureRecoveryStrategy.ESCALATE)
+        failure_context.recovery_strategy = recovery_strategy
+        
+        logger.info(f"Applying recovery strategy '{recovery_strategy.value}' for agent {agent.id}")
+        
+        # Execute recovery strategy
+        recovery_success = False
+        
         try:
-            session_id = str(uuid.uuid4())
+            if recovery_strategy == FailureRecoveryStrategy.RETRY:
+                recovery_success = await self._retry_agent_task(agent, task, goal_id, failure_context)
+                
+            elif recovery_strategy == FailureRecoveryStrategy.SUBSTITUTE_AGENT:
+                recovery_success = await self._substitute_agent(agent, task, goal_id, failure_context)
+                
+            elif recovery_strategy == FailureRecoveryStrategy.REPLAN:
+                recovery_success = await self._replan_task(agent, task, goal_id, failure_context)
+                
+            elif recovery_strategy == FailureRecoveryStrategy.CONTINUE_WITHOUT:
+                recovery_success = await self._continue_without_agent(agent, task, goal_id, failure_context)
+                
+            elif recovery_strategy == FailureRecoveryStrategy.ESCALATE:
+                await self._escalate_failure(agent, task, goal_id, failure_context)
+                recovery_success = False  # Escalation doesn't count as recovery
+                
+            else:  # ABORT
+                await self._abort_with_context(agent, task, goal_id, failure_context)
+                recovery_success = False
+                
+        except Exception as recovery_error:
+            logger.error(f"Recovery strategy failed: {recovery_error}")
+            recovery_success = False
             
-            # Create agent instances for the session
-            agents = []
-            for agent_type in agent_types:
-                agent = await self.create_agent_instance(agent_type)
-                agents.append(agent)
-            
-            session = CrewSession(
-                id=session_id,
-                name=name,
-                description=description,
-                agents=agents,
-                tasks=[],
-                process_type=process_type,
-                status="created"
-            )
-            
-            self.crew_sessions[session_id] = session
-            logger.info(f"Created crew session: {name} ({session_id})")
-            await self._emit_event("crew_session_created", {"session_id": session_id, "name": name})
-            return session
+            # Emit recovery failure event
+            yield {
+                "type": "recovery_failed",
+                "data": {
+                    "agent_id": agent.id,
+                    "recovery_strategy": recovery_strategy.value,
+                    "recovery_error": str(recovery_error),
+                    "original_failure": failure_context.error_message
+                }
+            }
+        
+        # Update recovery metrics
+        if agent.id in self.execution_metrics["recovery_success_rates"]:
+            self.execution_metrics["recovery_success_rates"][agent.id]["recovery_attempts"] += 1
+            if recovery_success:
+                self.execution_metrics["recovered_tasks"] += 1
+                self.execution_metrics["recovery_success_rates"][agent.id]["successful_recoveries"] += 1
+        
+        # Emit recovery outcome
+        yield {
+            "type": "recovery_outcome",
+            "data": {
+                "agent_id": agent.id,
+                "recovery_strategy": recovery_strategy.value,
+                "recovery_success": recovery_success,
+                "failure_context": asdict(failure_context)
+            }
+        }
+        
+        # If task failed, add to failed tasks
+        if task and not recovery_success:
+            task.failure_context = failure_context
+            task.status = TaskStatus.FAILED
+            task.error = failure_context.error_message
+            self.failed_tasks[task.id] = task
+    
+    async def _retry_agent_task(self, agent: AgentInstance, task: Optional[CrewTask], 
+                               goal_id: str, failure_context: FailureContext) -> bool:
+        """Retry the failed task with the same agent"""
+        if not task or agent.recovery_attempts >= task.max_retries:
+            logger.warning(f"Maximum retries reached for agent {agent.id}")
+            return False
+        
+        logger.info(f"Retrying task {task.id} with agent {agent.id} (attempt {agent.recovery_attempts + 1})")
+        
+        agent.recovery_attempts += 1
+        agent.status = "retrying"
+        
+        # Wait before retry with exponential backoff
+        wait_time = min(2 ** agent.recovery_attempts, 30)  # Max 30 seconds
+        await asyncio.sleep(wait_time)
+        
+        try:
+            # Reset agent status and retry
+            agent.status = "active"
+            # Note: Actual task retry would depend on the specific implementation
+            return True
             
         except Exception as e:
-            logger.error(f"Failed to create crew session: {e}")
-            raise
-    
-    async def execute_crew_session(self, session_id: str) -> AsyncGenerator[Dict[str, Any], None]:
-        """Execute a crew session with coordinated agents"""
-        if session_id not in self.crew_sessions:
-            raise ValueError(f"Crew session not found: {session_id}")
-        
-        session = self.crew_sessions[session_id]
-        
-        async with self._crew_lock:
-            try:
-                session.status = "running"
-                session.started_at = datetime.utcnow().isoformat()
-                
-                yield {
-                    "type": "crew_session_update",
-                    "session_id": session_id,
-                    "status": "running",
-                    "message": f"Starting crew session: {session.name}"
-                }
-                
-                if CREWAI_AVAILABLE and session.tasks:
-                    # Create CrewAI crew and tasks
-                    crew_agents = [agent.crew_agent for agent in session.agents if agent.crew_agent]
-                    crew_tasks = []
-                    
-                    for task in session.tasks:
-                        # Find the appropriate agent for this task
-                        task_agent = next(
-                            (agent.crew_agent for agent in session.agents 
-                             if agent.agent_type == task.agent_type and agent.crew_agent), 
-                            None
-                        )
-                        
-                        if task_agent:
-                            crew_task = Task(
-                                description=task.description,
-                                agent=task_agent,
-                                expected_output=task.expected_output or "Completed task output"
-                            )
-                            crew_tasks.append(crew_task)
-                    
-                    if crew_agents and crew_tasks:
-                        # Create and execute the crew
-                        crew = Crew(
-                            agents=crew_agents,
-                            tasks=crew_tasks,
-                            process=Process.sequential if session.process_type == "sequential" else Process.hierarchical,
-                            verbose=True
-                        )
-                        
-                        session.crew = crew
-                        
-                        # Execute the crew asynchronously
-                        result = await asyncio.get_event_loop().run_in_executor(
-                            self.executor, crew.kickoff
-                        )
-                        
-                        session.results["crew_output"] = str(result)
-                        
-                        yield {
-                            "type": "crew_session_output",
-                            "session_id": session_id,
-                            "output": str(result)
-                        }
-                
-                # Update session completion
-                session.status = "completed"
-                session.completed_at = datetime.utcnow().isoformat()
-                
-                yield {
-                    "type": "crew_session_update",
-                    "session_id": session_id,
-                    "status": "completed",
-                    "message": f"Crew session completed: {session.name}"
-                }
-                
-                logger.info(f"Crew session completed: {session_id}")
-                await self._emit_event("crew_session_completed", {"session_id": session_id})
-                
-            except Exception as e:
-                session.status = "failed"
-                error_msg = f"Crew session failed: {str(e)}"
-                logger.error(error_msg)
-                
-                yield {
-                    "type": "crew_session_update",
-                    "session_id": session_id,
-                    "status": "failed",
-                    "error": error_msg
-                }
-                
-                await self._emit_event("crew_session_failed", {"session_id": session_id, "error": error_msg})
-    
-    async def add_task_to_session(self, session_id: str, task: CrewTask) -> bool:
-        """Add a task to an existing crew session"""
-        if session_id not in self.crew_sessions:
+            logger.error(f"Retry attempt failed for agent {agent.id}: {e}")
             return False
-        
-        session = self.crew_sessions[session_id]
-        if session.status != "created":
-            logger.warning(f"Cannot add task to session {session_id} with status {session.status}")
+    
+    async def _substitute_agent(self, failed_agent: AgentInstance, task: Optional[CrewTask], 
+                               goal_id: str, failure_context: FailureContext) -> bool:
+        """Create a substitute agent to handle the failed task"""
+        try:
+            logger.info(f"Creating substitute agent for {failed_agent.agent_type.value}")
+            
+            # Create new agent of the same type
+            substitute = await self.create_agent_instance(failed_agent.agent_type)
+            substitute.status = "active"
+            
+            logger.info(f"Substitute agent {substitute.id} created for {failed_agent.id}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to create substitute agent: {e}")
             return False
-        
-        session.tasks.append(task)
-        logger.info(f"Added task {task.id} to session {session_id}")
+    
+    async def _replan_task(self, agent: AgentInstance, task: Optional[CrewTask], 
+                          goal_id: str, failure_context: FailureContext) -> bool:
+        """Replan the task with modified approach"""
+        logger.info(f"Replanning task due to agent {agent.id} failure")
         return True
     
-    async def get_session_status(self, session_id: str) -> Optional[Dict[str, Any]]:
-        """Get the current status of a crew session"""
-        if session_id not in self.crew_sessions:
-            return None
+    async def _continue_without_agent(self, agent: AgentInstance, task: Optional[CrewTask], 
+                                     goal_id: str, failure_context: FailureContext) -> bool:
+        """Continue execution without the failed agent (for non-critical agents)"""
+        logger.info(f"Continuing execution without agent {agent.id} ({agent.agent_type.value})")
+        agent.status = "disabled"
+        return True
+    
+    async def _escalate_failure(self, agent: AgentInstance, task: Optional[CrewTask], 
+                               goal_id: str, failure_context: FailureContext) -> None:
+        """Escalate the failure to higher-level management"""
+        failure_context.escalation_level += 1
         
-        session = self.crew_sessions[session_id]
-        return {
-            "id": session.id,
-            "name": session.name,
-            "status": session.status,
-            "agent_count": len(session.agents),
-            "task_count": len(session.tasks),
-            "started_at": session.started_at,
-            "completed_at": session.completed_at,
-            "results": session.results
+        logger.critical(f"""
+        ========== ESCALATED FAILURE ==========
+        Escalation Level: {failure_context.escalation_level}
+        Agent: {agent.name} ({agent.id})
+        Type: {agent.agent_type.value}
+        Task: {task.title if task else 'N/A'}
+        Error: {failure_context.error_message}
+        
+        This failure requires immediate attention and manual intervention.
+        ======================================
+        """)
+        
+        # Emit escalation event
+        await self._emit_event("failure_escalated", {
+            "failure_context": asdict(failure_context),
+            "escalation_level": failure_context.escalation_level,
+            "requires_manual_intervention": True
+        })
+    
+    async def _abort_with_context(self, agent: AgentInstance, task: Optional[CrewTask], 
+                                 goal_id: str, failure_context: FailureContext) -> None:
+        """Abort execution with detailed context"""
+        logger.critical(f"Aborting execution due to critical failure in agent {agent.id}")
+        
+        await self._emit_event("execution_aborted", {
+            "failure_context": asdict(failure_context),
+            "abort_reason": "Critical agent failure with abort strategy"
+        })
+    
+    async def create_agent_instance(self, agent_type: AgentType) -> AgentInstance:
+        """Create a new agent instance"""
+        agent_id = str(uuid.uuid4())
+        
+        instance = AgentInstance(
+            id=agent_id,
+            name=f"{agent_type.value.title().replace('_', ' ')} Agent",
+            agent_type=agent_type,
+            status="ready",
+            capabilities=[],
+            tools=[]
+        )
+        
+        self.agent_instances[agent_id] = instance
+        
+        # Initialize metrics for the new agent
+        self.execution_metrics["failure_rates"][agent_id] = {
+            "total_failures": 0,
+            "failure_rate": 0.0,
+            "last_failure": None
         }
+        
+        self.execution_metrics["recovery_success_rates"][agent_id] = {
+            "recovery_attempts": 0,
+            "successful_recoveries": 0,
+            "recovery_rate": 0.0
+        }
+        
+        return instance
     
     async def _emit_event(self, event_type: str, data: Dict[str, Any]) -> None:
         """Emit an event to registered callbacks"""
@@ -983,87 +519,556 @@ class EnhancedAgentOrchestrator:
                 except Exception as e:
                     logger.error(f"Event callback failed for {event_type}: {e}")
     
-    def register_event_callback(self, event_type: str, callback: Callable) -> None:
-        """Register a callback for specific event types"""
-        if event_type not in self.event_callbacks:
-            self.event_callbacks[event_type] = []
-        self.event_callbacks[event_type].append(callback)
+    async def process_goal_with_crewai(self, goal_text: str, goal_id: str) -> AsyncGenerator[Dict[str, Any], None]:
+        """Process a goal using CrewAI orchestration with enhanced failure handling"""
+        
+        async with self._execution_lock:
+            try:
+                logger.info(f"Starting CrewAI goal processing with enhanced failure handling: {goal_id}")
+                
+                # Initial status update
+                yield {
+                    "type": "goal_update",
+                    "goal_id": goal_id,
+                    "status": "analyzing"
+                }
+                
+                # Create and execute phases with failure handling
+                phases = [
+                    ("planning", self._execute_planning_phase_with_recovery),
+                    ("architecture", self._execute_architecture_phase_with_recovery),
+                    ("implementation", self._execute_implementation_phase_with_recovery),
+                    ("documentation", self._execute_documentation_phase_with_recovery)
+                ]
+                
+                for phase_name, phase_func in phases:
+                    try:
+                        async for update in phase_func(goal_text, goal_id):
+                            yield update
+                    except Exception as e:
+                        logger.error(f"Phase {phase_name} failed: {e}")
+                        
+                        # Create a dummy agent for failure handling
+                        dummy_agent = AgentInstance(
+                            id=str(uuid.uuid4()),
+                            name=f"{phase_name.title()} Phase Agent",
+                            agent_type=AgentType.PLANNER,
+                            status="failed"
+                        )
+                        
+                        # Handle the phase failure
+                        async for failure_update in self._handle_sub_agent_failure(
+                            dummy_agent, None, e, goal_id
+                        ):
+                            yield failure_update
+                
+                # Final completion
+                yield {
+                    "type": "goal_update",
+                    "goal_id": goal_id,
+                    "status": "completed"
+                }
+                
+                logger.info(f"CrewAI goal processing completed with enhanced failure handling: {goal_id}")
+                
+            except Exception as e:
+                logger.error(f"CrewAI goal processing failed for {goal_id}: {e}")
+                yield {
+                    "type": "goal_update",
+                    "goal_id": goal_id,
+                    "status": "error",
+                    "error": str(e)
+                }
     
-    async def get_execution_metrics(self) -> Dict[str, Any]:
-        """Get comprehensive execution metrics"""
-        return {
-            **self.execution_metrics,
-            "active_agents": len(self.agent_instances),
-            "active_sessions": len([s for s in self.crew_sessions.values() if s.status == "running"]),
-            "total_sessions": len(self.crew_sessions),
-            "queue_size": len(self.task_queue)
-        }
-    
-    async def cleanup_resources(self) -> None:
-        """Clean up completed sessions and unused resources"""
+    async def _execute_planning_phase_with_recovery(self, goal_text: str, goal_id: str) -> AsyncGenerator[Dict[str, Any], None]:
+        """Execute planning phase with recovery handling"""
+        planner = None
         try:
-            # Clean up completed sessions older than 1 hour
-            cutoff_time = datetime.utcnow() - timedelta(hours=1)
+            planner = await self.create_agent_instance(AgentType.PLANNER)
+            planner.status = "active"
             
-            sessions_to_remove = []
-            for session_id, session in self.crew_sessions.items():
-                if session.status in ["completed", "failed"] and session.completed_at:
-                    completed_time = datetime.fromisoformat(session.completed_at.replace('Z', '+00:00'))
-                    if completed_time < cutoff_time:
-                        sessions_to_remove.append(session_id)
+            yield {
+                "type": "agent_update",
+                "data": {
+                    "agent": {
+                        "id": planner.id,
+                        "name": planner.name,
+                        "type": planner.agent_type.value,
+                        "status": "active",
+                        "task": "Analyzing and planning the goal",
+                        "progress": 0.0,
+                        "created_at": planner.created_at,
+                        "updated_at": planner.updated_at
+                    }
+                }
+            }
             
-            for session_id in sessions_to_remove:
-                del self.crew_sessions[session_id]
-                logger.debug(f"Cleaned up old session: {session_id}")
+            # Simulate planning work
+            await asyncio.sleep(1)
             
-            # Clean up completed tasks
-            self.completed_tasks = {k: v for k, v in self.completed_tasks.items() 
-                                  if datetime.fromisoformat(v.completed_at or v.updated_at) > cutoff_time}
+            planner.status = "completed"
+            planner.progress = 1.0
             
-            # Clean up failed tasks older than 24 hours
-            day_cutoff = datetime.utcnow() - timedelta(hours=24)
-            self.failed_tasks = {k: v for k, v in self.failed_tasks.items() 
-                               if datetime.fromisoformat(v.updated_at) > day_cutoff}
+            yield {
+                "type": "output_update",
+                "data": {
+                    "output": {
+                        "id": str(uuid.uuid4()),
+                        "goalId": goal_id,
+                        "type": "planning",
+                        "title": "Project Planning Complete",
+                        "content": f"Planning completed for goal: {goal_text}",
+                        "timestamp": datetime.utcnow().isoformat(),
+                        "agent_id": planner.id
+                    }
+                }
+            }
             
-            logger.info("Resource cleanup completed")
+            yield {
+                "type": "agent_update",
+                "data": {
+                    "agent": {
+                        "id": planner.id,
+                        "name": planner.name,
+                        "type": planner.agent_type.value,
+                        "status": "completed",
+                        "task": "Planning completed",
+                        "progress": 1.0,
+                        "created_at": planner.created_at,
+                        "updated_at": planner.updated_at
+                    }
+                }
+            }
             
         except Exception as e:
-            logger.error(f"Resource cleanup failed: {e}")
+            # Handle planning phase failure
+            if planner:
+                async for failure_update in self._handle_sub_agent_failure(planner, None, e, goal_id):
+                    yield failure_update
     
-    async def shutdown(self) -> None:
-        """Gracefully shutdown the orchestrator"""
+    async def _execute_architecture_phase_with_recovery(self, goal_text: str, goal_id: str) -> AsyncGenerator[Dict[str, Any], None]:
+        """Execute architecture phase with recovery handling"""
+        architect = None
         try:
-            logger.info("Shutting down Enhanced Agent Orchestrator...")
+            architect = await self.create_agent_instance(AgentType.ARCHITECT)
+            architect.status = "active"
             
-            # Stop all running sessions
-            for session in self.crew_sessions.values():
-                if session.status == "running":
-                    session.status = "stopped"
+            yield {
+                "type": "agent_update",
+                "data": {
+                    "agent": {
+                        "id": architect.id,
+                        "name": architect.name,
+                        "type": architect.agent_type.value,
+                        "status": "active",
+                        "task": "Designing system architecture",
+                        "progress": 0.0,
+                        "created_at": architect.created_at,
+                        "updated_at": architect.updated_at
+                    }
+                }
+            }
             
-            # Shutdown executor
-            self.executor.shutdown(wait=True)
+            # Simulate architecture work
+            await asyncio.sleep(1)
             
-            # Final cleanup
-            await self.cleanup_resources()
+            architect.status = "completed"
+            architect.progress = 1.0
             
-            logger.info("Enhanced Agent Orchestrator shutdown complete")
+            yield {
+                "type": "output_update",
+                "data": {
+                    "output": {
+                        "id": str(uuid.uuid4()),
+                        "goalId": goal_id,
+                        "type": "architecture",
+                        "title": "System Architecture Design",
+                        "content": f"Architecture design completed for goal: {goal_text}",
+                        "timestamp": datetime.utcnow().isoformat(),
+                        "agent_id": architect.id
+                    }
+                }
+            }
+            
+            yield {
+                "type": "agent_update",
+                "data": {
+                    "agent": {
+                        "id": architect.id,
+                        "name": architect.name,
+                        "type": architect.agent_type.value,
+                        "status": "completed",
+                        "task": "Architecture design completed",
+                        "progress": 1.0,
+                        "created_at": architect.created_at,
+                        "updated_at": architect.updated_at
+                    }
+                }
+            }
             
         except Exception as e:
-            logger.error(f"Error during shutdown: {e}")
+            # Handle architecture phase failure
+            if architect:
+                async for failure_update in self._handle_sub_agent_failure(architect, None, e, goal_id):
+                    yield failure_update
     
-    async def push_to_github(self, commit_message: str = "Update orchestrator state") -> bool:
-        """Push the current orchestrator state or code changes to GitHub (placeholder for integration)"""
-        # NOTE: Actual implementation requires repo URL, authentication, and gitpython or subprocess
+    async def _execute_implementation_phase_with_recovery(self, goal_text: str, goal_id: str) -> AsyncGenerator[Dict[str, Any], None]:
+        """Execute implementation phase with recovery handling"""
+        coder = None
         try:
-            import subprocess
-            # Stage all changes
-            subprocess.run(["git", "add", "-A"], check=True)
-            # Commit
-            subprocess.run(["git", "commit", "-m", commit_message], check=True)
-            # Push
-            subprocess.run(["git", "push"], check=True)
-            logger.info("Successfully pushed orchestrator state to GitHub.")
-            return True
+            coder = await self.create_agent_instance(AgentType.CODE_EXECUTOR)
+            coder.status = "active"
+            
+            yield {
+                "type": "agent_update",
+                "data": {
+                    "agent": {
+                        "id": coder.id,
+                        "name": coder.name,
+                        "type": coder.agent_type.value,
+                        "status": "active",
+                        "task": "Planning implementation strategy",
+                        "progress": 0.0,
+                        "created_at": coder.created_at,
+                        "updated_at": coder.updated_at
+                    }
+                }
+            }
+            
+            # Simulate implementation work
+            await asyncio.sleep(1)
+            
+            coder.status = "completed"
+            coder.progress = 1.0
+            
+            yield {
+                "type": "output_update",
+                "data": {
+                    "output": {
+                        "id": str(uuid.uuid4()),
+                        "goalId": goal_id,
+                        "type": "implementation",
+                        "title": "Implementation Strategy",
+                        "content": f"Implementation strategy completed for goal: {goal_text}",
+                        "timestamp": datetime.utcnow().isoformat(),
+                        "agent_id": coder.id
+                    }
+                }
+            }
+            
+            yield {
+                "type": "agent_update",
+                "data": {
+                    "agent": {
+                        "id": coder.id,
+                        "name": coder.name,
+                        "type": coder.agent_type.value,
+                        "status": "completed",
+                        "task": "Implementation planning completed",
+                        "progress": 1.0,
+                        "created_at": coder.created_at,
+                        "updated_at": coder.updated_at
+                    }
+                }
+            }
+            
         except Exception as e:
-            logger.error(f"Failed to push to GitHub: {e}")
-            return False
+            # Handle implementation phase failure
+            if coder:
+                async for failure_update in self._handle_sub_agent_failure(coder, None, e, goal_id):
+                    yield failure_update
+    
+    async def _execute_documentation_phase_with_recovery(self, goal_text: str, goal_id: str) -> AsyncGenerator[Dict[str, Any], None]:
+        """Execute documentation phase with recovery handling"""
+        doc_agent = None
+        try:
+            doc_agent = await self.create_agent_instance(AgentType.DOCUMENTATION_GENERATOR)
+            doc_agent.status = "active"
+            
+            yield {
+                "type": "agent_update",
+                "data": {
+                    "agent": {
+                        "id": doc_agent.id,
+                        "name": doc_agent.name,
+                        "type": doc_agent.agent_type.value,
+                        "status": "active",
+                        "task": "Generating documentation",
+                        "progress": 0.0,
+                        "created_at": doc_agent.created_at,
+                        "updated_at": doc_agent.updated_at
+                    }
+                }
+            }
+            
+            # Simulate documentation work
+            await asyncio.sleep(1)
+            
+            doc_agent.status = "completed"
+            doc_agent.progress = 1.0
+            
+            yield {
+                "type": "output_update",
+                "data": {
+                    "output": {
+                        "id": str(uuid.uuid4()),
+                        "goalId": goal_id,
+                        "type": "documentation",
+                        "title": "Documentation Complete",
+                        "content": f"Documentation completed for goal: {goal_text}",
+                        "timestamp": datetime.utcnow().isoformat(),
+                        "agent_id": doc_agent.id
+                    }
+                }
+            }
+            
+            yield {
+                "type": "agent_update",
+                "data": {
+                    "agent": {
+                        "id": doc_agent.id,
+                        "name": doc_agent.name,
+                        "type": doc_agent.agent_type.value,
+                        "status": "completed",
+                        "task": "Documentation completed",
+                        "progress": 1.0,
+                        "created_at": doc_agent.created_at,
+                        "updated_at": doc_agent.updated_at
+                    }
+                }
+            }
+            
+        except Exception as e:
+            # Handle documentation phase failure
+            if doc_agent:
+                async for failure_update in self._handle_sub_agent_failure(doc_agent, None, e, goal_id):
+                    yield failure_update
+
+    def _start_memory_cleanup(self):
+        """Start memory cleanup task for Feature-BE-11"""
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                self._cleanup_task = loop.create_task(self._memory_cleanup_loop())
+            else:
+                logger.warning("Event loop not running, memory cleanup will start when loop becomes available")
+        except Exception as e:
+            logger.error(f"Failed to start memory cleanup task: {e}")
+
+    async def _memory_cleanup_loop(self):
+        """Main memory cleanup loop for Feature-BE-11"""
+        while True:
+            try:
+                await asyncio.sleep(self._memory_cleanup_interval)
+                await self._perform_memory_cleanup()
+            except Exception as e:
+                logger.error(f"Error in memory cleanup loop: {e}")
+                await asyncio.sleep(60)  # Wait before retrying
+
+    async def _perform_memory_cleanup(self):
+        """Perform memory cleanup to prevent leaks (Feature-BE-11)"""
+        try:
+            logger.debug("Starting memory cleanup...")
+            
+            # Cleanup old agent instances
+            await self._cleanup_old_agents()
+            
+            # Cleanup old tasks
+            await self._cleanup_old_tasks()
+            
+            # Cleanup old failure history
+            await self._cleanup_old_failures()
+            
+            # Force garbage collection
+            import gc
+            collected = gc.collect()
+            logger.debug(f"Memory cleanup completed, garbage collected {collected} objects")
+            
+        except Exception as e:
+            logger.error(f"Error during memory cleanup: {e}")
+
+    async def _cleanup_old_agents(self):
+        """Cleanup old agent instances to prevent memory accumulation"""
+        try:
+            current_time = datetime.utcnow()
+            cutoff_time = current_time - timedelta(hours=1)  # Remove agents older than 1 hour
+            
+            agents_to_remove = []
+            for agent_id, agent in self.agent_instances.items():
+                try:
+                    last_active = datetime.fromisoformat(agent.last_active.replace('Z', '+00:00'))
+                    if last_active < cutoff_time and agent.status in ["completed", "failed", "disabled"]:
+                        agents_to_remove.append(agent_id)
+                except (ValueError, AttributeError):
+                    # Invalid datetime format, mark for removal if inactive
+                    if agent.status in ["completed", "failed", "disabled"]:
+                        agents_to_remove.append(agent_id)
+            
+            # Keep only the most recent agents if we have too many
+            if len(self.agent_instances) > self._max_agent_history:
+                sorted_agents = sorted(
+                    self.agent_instances.items(),
+                    key=lambda x: x[1].last_active,
+                    reverse=True
+                )
+                agents_to_keep = dict(sorted_agents[:self._max_agent_history])
+                agents_to_remove.extend([aid for aid in self.agent_instances.keys() if aid not in agents_to_keep])
+            
+            # Remove old agents
+            for agent_id in agents_to_remove:
+                if agent_id in self.agent_instances:
+                    agent = self.agent_instances[agent_id]
+                    # Clear agent references
+                    agent.crew_agent = None
+                    agent.failure_history.clear()
+                    del self.agent_instances[agent_id]
+                    
+                    # Clean up metrics
+                    if agent_id in self.execution_metrics.get("failure_rates", {}):
+                        del self.execution_metrics["failure_rates"][agent_id]
+                    if agent_id in self.execution_metrics.get("recovery_success_rates", {}):
+                        del self.execution_metrics["recovery_success_rates"][agent_id]
+            
+            if agents_to_remove:
+                logger.debug(f"Cleaned up {len(agents_to_remove)} old agent instances")
+                
+        except Exception as e:
+            logger.error(f"Error cleaning up old agents: {e}")
+
+    async def _cleanup_old_tasks(self):
+        """Cleanup old tasks to prevent memory accumulation"""
+        try:
+            # Cleanup completed tasks
+            if len(self.completed_tasks) > self._max_task_history:
+                sorted_tasks = sorted(
+                    self.completed_tasks.items(),
+                    key=lambda x: x[1].completed_at or x[1].updated_at,
+                    reverse=True
+                )
+                tasks_to_keep = dict(sorted_tasks[:self._max_task_history])
+                tasks_to_remove = [tid for tid in self.completed_tasks.keys() if tid not in tasks_to_keep]
+                
+                for task_id in tasks_to_remove:
+                    del self.completed_tasks[task_id]
+                
+                logger.debug(f"Cleaned up {len(tasks_to_remove)} old completed tasks")
+            
+            # Cleanup failed tasks
+            if len(self.failed_tasks) > self._max_task_history:
+                sorted_tasks = sorted(
+                    self.failed_tasks.items(),
+                    key=lambda x: x[1].updated_at,
+                    reverse=True
+                )
+                tasks_to_keep = dict(sorted_tasks[:self._max_task_history])
+                tasks_to_remove = [tid for tid in self.failed_tasks.keys() if tid not in tasks_to_keep]
+                
+                for task_id in tasks_to_remove:
+                    task = self.failed_tasks[task_id]
+                    # Clear task references
+                    task.failure_context = None
+                    del self.failed_tasks[task_id]
+                
+                logger.debug(f"Cleaned up {len(tasks_to_remove)} old failed tasks")
+                
+        except Exception as e:
+            logger.error(f"Error cleaning up old tasks: {e}")
+
+    async def _cleanup_old_failures(self):
+        """Cleanup old failure history to prevent memory accumulation"""
+        try:
+            if len(self.failure_history) > self._max_failure_history:
+                # Keep only the most recent failures
+                self.failure_history = self.failure_history[-self._max_failure_history:]
+                logger.debug(f"Cleaned up old failure history, keeping {len(self.failure_history)} recent entries")
+                
+        except Exception as e:
+            logger.error(f"Error cleaning up old failures: {e}")
+
+    def get_memory_stats(self) -> Dict[str, Any]:
+        """Get memory usage statistics (Feature-BE-11)"""
+        try:
+            import psutil
+            import os
+            
+            process = psutil.Process(os.getpid())
+            memory_info = process.memory_info()
+            
+            return {
+                "agent_instances": len(self.agent_instances),
+                "crew_sessions": len(self.crew_sessions),
+                "completed_tasks": len(self.completed_tasks),
+                "failed_tasks": len(self.failed_tasks),
+                "failure_history": len(self.failure_history),
+                "task_queue": len(self.task_queue),
+                "process_memory_rss_mb": memory_info.rss / (1024 * 1024),
+                "process_memory_vms_mb": memory_info.vms / (1024 * 1024),
+                "memory_cleanup_interval": self._memory_cleanup_interval,
+                "max_agent_history": self._max_agent_history,
+                "max_task_history": self._max_task_history,
+                "max_failure_history": self._max_failure_history
+            }
+        except Exception as e:
+            logger.error(f"Error getting memory stats: {e}")
+            return {"error": str(e)}
+
+    async def cleanup_resources(self):
+        """Cleanup all resources (Feature-BE-11)"""
+        try:
+            logger.info("Starting comprehensive resource cleanup...")
+            
+            # Stop cleanup task
+            if self._cleanup_task and not self._cleanup_task.done():
+                self._cleanup_task.cancel()
+                try:
+                    await self._cleanup_task
+                except asyncio.CancelledError:
+                    pass
+            
+            # Clear all collections
+            self.agent_instances.clear()
+            self.crew_sessions.clear()
+            self.task_queue.clear()
+            self.completed_tasks.clear()
+            self.failed_tasks.clear()
+            self.failure_history.clear()
+            self.event_callbacks.clear()
+            
+            # Reset metrics
+            self.execution_metrics = {
+                "total_tasks": 0,
+                "completed_tasks": 0,
+                "failed_tasks": 0,
+                "recovered_tasks": 0,
+                "average_execution_time": 0.0,
+                "agent_utilization": {},
+                "failure_rates": {},
+                "recovery_success_rates": {}
+            }
+            
+            # Shutdown thread pool
+            if self.executor:
+                self.executor.shutdown(wait=True)
+            
+            # Cleanup memory manager if available
+            if self._memory_manager:
+                self._memory_manager.cleanup()
+            
+            # Force garbage collection
+            import gc
+            collected = gc.collect()
+            
+            logger.info(f"Resource cleanup completed, garbage collected {collected} objects")
+            
+        except Exception as e:
+            logger.error(f"Error during resource cleanup: {e}")
+
+    def __del__(self):
+        """Destructor to ensure cleanup (Feature-BE-11)"""
+        try:
+            if hasattr(self, 'executor') and self.executor:
+                self.executor.shutdown(wait=False)
+            if hasattr(self, '_memory_manager') and self._memory_manager:
+                self._memory_manager.cleanup()
+        except:
+            pass

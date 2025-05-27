@@ -229,8 +229,96 @@ class MemoryManager:
     def __del__(self):
         """Cleanup on destruction"""
         try:
-            # Optional: cleanup disk cache on destruction
-            # self.cleanup_disk_cache()
-            pass
+            self.cleanup()
         except:
             pass
+
+    def cleanup(self):
+        """Enhanced cleanup for memory leak prevention (Feature-BE-11)"""
+        try:
+            with self._lock:
+                # Clear all memory structures
+                self._memory.clear()
+                self._metadata.clear()
+                self._current_size = 0
+                
+                # Reset stats
+                self._stats = {
+                    'hits': 0,
+                    'misses': 0,
+                    'evictions': 0,
+                    'stores': 0,
+                    'retrievals': 0
+                }
+                
+                logger.debug("MemoryManager cleanup completed")
+                
+        except Exception as e:
+            logger.error(f"Error during MemoryManager cleanup: {e}")
+
+    def force_garbage_collection(self):
+        """Force garbage collection to free up memory (Feature-BE-11)"""
+        import gc
+        try:
+            collected = gc.collect()
+            logger.debug(f"Garbage collection freed {collected} objects")
+            return collected
+        except Exception as e:
+            logger.error(f"Error during garbage collection: {e}")
+            return 0
+
+    def get_memory_usage(self) -> Dict[str, Any]:
+        """Get detailed memory usage information (Feature-BE-11)"""
+        import psutil
+        import os
+        
+        try:
+            process = psutil.Process(os.getpid())
+            memory_info = process.memory_info()
+            
+            return {
+                "cache_memory_bytes": self._current_size,
+                "cache_memory_mb": self._current_size / (1024 * 1024),
+                "process_memory_rss_mb": memory_info.rss / (1024 * 1024),
+                "process_memory_vms_mb": memory_info.vms / (1024 * 1024),
+                "cache_items": len(self._memory),
+                "metadata_items": len(self._metadata),
+                "cache_utilization_percent": (self._current_size / self.max_memory_bytes) * 100
+            }
+        except Exception as e:
+            logger.error(f"Error getting memory usage: {e}")
+            return {"error": str(e)}
+
+    async def periodic_cleanup(self, cleanup_interval: int = 300):
+        """Periodic cleanup to prevent memory accumulation (Feature-BE-11)"""
+        while True:
+            try:
+                await asyncio.sleep(cleanup_interval)
+                
+                # Clean up old entries based on access time
+                current_time = time.time()
+                old_threshold = current_time - (cleanup_interval * 2)  # Items older than 2 cleanup cycles
+                
+                with self._lock:
+                    keys_to_remove = []
+                    for key, metadata in self._metadata.items():
+                        last_access = metadata.get('last_access', metadata.get('timestamp', 0))
+                        if last_access < old_threshold:
+                            keys_to_remove.append(key)
+                    
+                    # Remove old entries
+                    for key in keys_to_remove:
+                        if key in self._memory:
+                            self._current_size -= self._metadata[key]['size']
+                            del self._memory[key]
+                            del self._metadata[key]
+                    
+                    if keys_to_remove:
+                        logger.debug(f"Periodic cleanup removed {len(keys_to_remove)} old cache entries")
+                
+                # Force garbage collection periodically
+                self.force_garbage_collection()
+                
+            except Exception as e:
+                logger.error(f"Error during periodic cleanup: {e}")
+                await asyncio.sleep(60)  # Wait a minute before retrying

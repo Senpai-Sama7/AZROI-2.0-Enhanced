@@ -4,6 +4,8 @@ import os
 import json
 import logging
 import asyncio
+import time
+import random
 from typing import Dict, Any, List, Optional, Tuple, Union
 import uuid
 
@@ -13,12 +15,116 @@ from langchain_core.prompts import PromptTemplate
 
 logger = logging.getLogger("ai-architect-backend.cloud_agent")
 
+
+class RetryConfig:
+    """Configuration for retry mechanism with exponential backoff"""
+    def __init__(self, 
+                 max_retries: int = 3,
+                 base_delay: float = 1.0,
+                 max_delay: float = 60.0,
+                 exponential_base: float = 2.0,
+                 jitter: bool = True):
+        self.max_retries = max_retries
+        self.base_delay = base_delay
+        self.max_delay = max_delay
+        self.exponential_base = exponential_base
+        self.jitter = jitter
+    
+    def get_delay(self, attempt: int) -> float:
+        """Calculate delay for given attempt with exponential backoff"""
+        delay = min(self.base_delay * (self.exponential_base ** attempt), self.max_delay)
+        if self.jitter:
+            # Add jitter to avoid thundering herd
+            delay = delay * (0.5 + random.random() * 0.5)
+        return delay
+
+
+def with_retry(retry_config: Optional[RetryConfig] = None):
+    """Decorator to add retry logic with exponential backoff for transient network errors"""
+    if retry_config is None:
+        retry_config = RetryConfig()
+    
+    def decorator(func):
+        async def wrapper(*args, **kwargs):
+            last_exception = None
+            
+            for attempt in range(retry_config.max_retries + 1):
+                try:
+                    result = await func(*args, **kwargs) if asyncio.iscoroutinefunction(func) else func(*args, **kwargs)
+                    
+                    # If this is a JSON response, check for success
+                    if isinstance(result, str):
+                        try:
+                            result_dict = json.loads(result)
+                            if result_dict.get("success", True):  # Default to success if not specified
+                                return result
+                            # If not successful, treat as an error for retry logic
+                            error_msg = result_dict.get("error", "Unknown error")
+                            if _is_transient_error(error_msg):
+                                raise Exception(f"Transient error: {error_msg}")
+                            else:
+                                return result  # Non-transient error, don't retry
+                        except json.JSONDecodeError:
+                            return result  # Not JSON, return as-is
+                    
+                    return result
+                    
+                except Exception as e:
+                    last_exception = e
+                    error_msg = str(e)
+                    
+                    # Check if this is a transient error worth retrying
+                    if not _is_transient_error(error_msg) or attempt == retry_config.max_retries:
+                        logger.error(f"Non-transient error or max retries reached for {func.__name__}: {error_msg}")
+                        # Return error response with retry context
+                        return json.dumps({
+                            "success": False,
+                            "error": f"Failed after {attempt + 1} attempts: {error_msg}",
+                            "retry_attempts": attempt + 1,
+                            "max_retries": retry_config.max_retries,
+                            "last_error": error_msg
+                        })
+                    
+                    # Log retry attempt
+                    logger.warning(f"Transient error in {func.__name__} (attempt {attempt + 1}/{retry_config.max_retries + 1}): {error_msg}")
+                    
+                    if attempt < retry_config.max_retries:
+                        delay = retry_config.get_delay(attempt)
+                        logger.info(f"Retrying {func.__name__} in {delay:.2f} seconds...")
+                        await asyncio.sleep(delay)
+            
+            # Should not reach here, but handle gracefully
+            return json.dumps({
+                "success": False,
+                "error": f"Unexpected error after retries: {str(last_exception)}",
+                "retry_attempts": retry_config.max_retries + 1
+            })
+        
+        return wrapper
+    return decorator
+
+
+def _is_transient_error(error_msg: str) -> bool:
+    """Determine if an error is transient and worth retrying"""
+    transient_indicators = [
+        "timeout", "connection", "network", "temporary", "unavailable",
+        "503", "502", "504", "429", "connection reset", "connection refused",
+        "dns", "resolve", "unreachable", "reset by peer", "broken pipe",
+        "server error", "internal server error", "bad gateway", "gateway timeout",
+        "too many requests", "rate limit", "quota exceeded", "throttle"
+    ]
+    
+    error_lower = error_msg.lower()
+    return any(indicator in error_lower for indicator in transient_indicators)
+
 class CloudAgent:
     """
     Cloud Agent: Responsible for deploying applications to cloud environments,
     managing cloud storage, building Docker images, and setting up cloud resources.
     This agent primarily works with Google Cloud Platform services like Cloud Storage,
     Artifact Registry, Cloud Build, and Cloud Run.
+    
+    Enhanced with robust transient network error handling and retry mechanisms.
     """
     
     def __init__(self, 
@@ -47,7 +153,7 @@ class CloudAgent:
             "You are a Cloud Deployment Specialist with expertise in GCP services. Your task is to deploy applications to cloud environments securely and efficiently."
         )
         
-        logger.info("Cloud agent initialized")
+        logger.info("Cloud agent initialized with enhanced retry capabilities")
     
     async def initialize(self):
         """Initialize the cloud agent with CrewAI."""
@@ -65,7 +171,10 @@ class CloudAgent:
             ]
             
             # Use Gemini Pro by default for cloud operations
-            llm = await self.llm_router.get_llm("gemini-2.5-pro-preview-04-11")
+            if self.llm_router:
+                llm = await self.llm_router.get_llm("gemini-2.5-pro-preview-04-11")
+            else:
+                llm = None
             
             # Create the agent
             self.agent = Agent(
@@ -75,7 +184,8 @@ class CloudAgent:
                     "You are a Cloud Deployment Specialist with expertise in containerization, "
                     "cloud services, and infrastructure automation. You know how to package applications, "
                     "deploy them to cloud providers like GCP, and ensure they are scalable and secure. "
-                    "You understand networking, security best practices, and infrastructure as code."
+                    "You understand networking, security best practices, and infrastructure as code. "
+                    "You handle transient network errors gracefully with automated retry mechanisms."
                 ),
                 verbose=True,
                 llm=llm,
@@ -101,9 +211,10 @@ class CloudAgent:
             raise
     
     @tool("Deploy application to Cloud Run")
+    @with_retry(RetryConfig(max_retries=3, base_delay=2.0, max_delay=30.0))
     def deploy_to_cloud_run(self, image_uri: str, service_name: Optional[str] = None, goal_id: str = None) -> str:
         """
-        Deploy a container image to Google Cloud Run.
+        Deploy a container image to Google Cloud Run with robust retry handling.
         
         Args:
             image_uri: The URI of the container image to deploy
@@ -114,7 +225,7 @@ class CloudAgent:
             JSON string with deployment results
         """
         try:
-            start_time = asyncio.get_event_loop().time()
+            start_time = time.time()
             
             from google.cloud import run_v2
             
@@ -128,7 +239,7 @@ class CloudAgent:
             # Generate service name if not provided
             if not service_name:
                 prefix = self.config.get("gcp_config_defaults", {}).get("cloud_run_service_prefix", "ai-arch-svc")
-                service_name = f"{prefix}-{goal_id.split('-')[0]}"
+                service_name = f"{prefix}-{goal_id.split('-')[0]}" if goal_id else f"{prefix}-default"
             
             # Create service
             service = run_v2.Service()
@@ -136,9 +247,10 @@ class CloudAgent:
             service.template.containers = [run_v2.Container(image=image_uri)]
             
             # Set environment variables
-            service.template.containers[0].env = [
-                run_v2.EnvVar(name="GOAL_ID", value=goal_id)
-            ]
+            if goal_id:
+                service.template.containers[0].env = [
+                    run_v2.EnvVar(name="GOAL_ID", value=goal_id)
+                ]
             
             # Set resource limits
             service.template.containers[0].resources = run_v2.ResourceRequirements(
@@ -165,17 +277,15 @@ class CloudAgent:
             
             # Set IAM policy for unauthenticated access if needed
             if allow_unauthenticated:
-                from google.cloud import run_v2
                 from google.iam.v1 import policy_pb2, binding_pb2
                 
-                iam_client = run_v2.ServicesClient()
                 policy = policy_pb2.Policy()
                 binding = binding_pb2.Binding()
                 binding.role = "roles/run.invoker"
                 binding.members.append("allUsers")
                 policy.bindings.append(binding)
                 
-                iam_policy = iam_client.set_iam_policy(
+                client.set_iam_policy(
                     request={
                         "resource": response.name,
                         "policy": policy
@@ -184,7 +294,9 @@ class CloudAgent:
             
             # Store deployment record in memory
             if self.memory_manager:
-                asyncio.get_event_loop().run_until_complete(
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                loop.run_until_complete(
                     self.memory_manager.store_memory(
                         content=json.dumps({
                             "service_name": service_name,
@@ -200,10 +312,11 @@ class CloudAgent:
                         }
                     )
                 )
+                loop.close()
             
             # Track timing and success metrics
             if self.monitoring_system:
-                duration = asyncio.get_event_loop().time() - start_time
+                duration = time.time() - start_time
                 self.monitoring_system.agent_operation_duration.labels(
                     agent_type="cloud",
                     operation="deploy_to_cloud_run"
@@ -218,7 +331,7 @@ class CloudAgent:
                 "service_name": service_name,
                 "service_url": response.uri,
                 "region": location,
-                "revision": response.template.revision
+                "revision": response.template.revision if hasattr(response.template, 'revision') else "unknown"
             })
             
         except Exception as e:
@@ -235,9 +348,10 @@ class CloudAgent:
             })
     
     @tool("Upload files to Cloud Storage")
+    @with_retry(RetryConfig(max_retries=3, base_delay=1.0, max_delay=20.0))
     def upload_to_cloud_storage(self, local_path: str, goal_id: str, destination_folder: Optional[str] = None) -> str:
         """
-        Upload files or directories to Google Cloud Storage.
+        Upload files or directories to Google Cloud Storage with robust retry handling.
         
         Args:
             local_path: Path to local file or directory to upload
@@ -248,10 +362,9 @@ class CloudAgent:
             JSON string with upload results and GCS URI
         """
         try:
-            start_time = asyncio.get_event_loop().time()
+            start_time = time.time()
             
             from google.cloud import storage
-            import os
             
             # Initialize client
             client = storage.Client()
@@ -313,7 +426,9 @@ class CloudAgent:
                 
             # Store upload record in memory
             if self.memory_manager:
-                asyncio.get_event_loop().run_until_complete(
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                loop.run_until_complete(
                     self.memory_manager.store_memory(
                         content=json.dumps({
                             "bucket": bucket_name,
@@ -329,10 +444,11 @@ class CloudAgent:
                         }
                     )
                 )
+                loop.close()
             
             # Track timing and success metrics
             if self.monitoring_system:
-                duration = asyncio.get_event_loop().time() - start_time
+                duration = time.time() - start_time
                 self.monitoring_system.agent_operation_duration.labels(
                     agent_type="cloud",
                     operation="upload_to_cloud_storage"
@@ -367,9 +483,10 @@ class CloudAgent:
             })
     
     @tool("Build Docker image with Cloud Build")
+    @with_retry(RetryConfig(max_retries=3, base_delay=2.0, max_delay=45.0))
     def build_docker_image(self, source_uri: str, goal_id: str, dockerfile_path: Optional[str] = None, image_name: Optional[str] = None) -> str:
         """
-        Build a Docker image using Google Cloud Build.
+        Build a Docker image using Google Cloud Build with robust retry handling.
         
         Args:
             source_uri: GCS URI pointing to the source code directory
@@ -381,7 +498,7 @@ class CloudAgent:
             JSON string with build results
         """
         try:
-            start_time = asyncio.get_event_loop().time()
+            start_time = time.time()
             
             from google.cloud import build_v1
             from google.cloud.devtools import cloudbuild_v1
@@ -435,7 +552,9 @@ class CloudAgent:
             
             # Store build record in memory
             if self.memory_manager:
-                asyncio.get_event_loop().run_until_complete(
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                loop.run_until_complete(
                     self.memory_manager.store_memory(
                         content=json.dumps({
                             "build_id": operation_id,
@@ -451,10 +570,11 @@ class CloudAgent:
                         }
                     )
                 )
+                loop.close()
             
             # Track timing and success metrics
             if self.monitoring_system:
-                duration = asyncio.get_event_loop().time() - start_time
+                duration = time.time() - start_time
                 self.monitoring_system.agent_operation_duration.labels(
                     agent_type="cloud",
                     operation="build_docker_image"
@@ -486,9 +606,10 @@ class CloudAgent:
             })
     
     @tool("Manage Artifact Registry repository")
+    @with_retry(RetryConfig(max_retries=2, base_delay=1.5, max_delay=15.0))
     def manage_artifact_registry(self, operation: str, repository_name: Optional[str] = None, repository_format: str = "DOCKER") -> str:
         """
-        Manage Google Artifact Registry repositories.
+        Manage Google Artifact Registry repositories with robust retry handling.
         
         Args:
             operation: Operation to perform (create, list)
@@ -499,7 +620,7 @@ class CloudAgent:
             JSON string with operation results
         """
         try:
-            start_time = asyncio.get_event_loop().time()
+            start_time = time.time()
             
             from google.cloud import artifactregistry_v1
             
@@ -609,7 +730,7 @@ class CloudAgent:
                 
             # Track timing and success metrics
             if self.monitoring_system:
-                duration = asyncio.get_event_loop().time() - start_time
+                duration = time.time() - start_time
                 self.monitoring_system.agent_operation_duration.labels(
                     agent_type="cloud",
                     operation="manage_artifact_registry"
@@ -633,9 +754,10 @@ class CloudAgent:
             })
     
     @tool("List cloud resources")
+    @with_retry(RetryConfig(max_retries=2, base_delay=1.0, max_delay=10.0))
     def list_cloud_resources(self, resource_type: str, goal_id: Optional[str] = None) -> str:
         """
-        List cloud resources of a specific type.
+        List cloud resources of a specific type with robust retry handling.
         
         Args:
             resource_type: Type of resource to list (cloud_run, cloud_storage, cloud_build)
@@ -645,7 +767,7 @@ class CloudAgent:
             JSON string with list of resources
         """
         try:
-            start_time = asyncio.get_event_loop().time()
+            start_time = time.time()
             
             # Get project ID and region
             project_id = self.config.get("gcp_config_defaults", {}).get("project_id")
@@ -727,7 +849,7 @@ class CloudAgent:
             
             # Track timing and success metrics
             if self.monitoring_system:
-                duration = asyncio.get_event_loop().time() - start_time
+                duration = time.time() - start_time
                 self.monitoring_system.agent_operation_duration.labels(
                     agent_type="cloud",
                     operation="list_cloud_resources"

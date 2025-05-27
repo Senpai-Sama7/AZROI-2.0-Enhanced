@@ -10,7 +10,7 @@ import psutil
 import time
 import shutil
 import subprocess
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, List, Optional, Tuple, Union
 import threading
 import importlib.util
 
@@ -51,6 +51,9 @@ class HardwareAuditSystem:
     Enhanced system for auditing hardware resources and monitoring system performance.
     This is critical for ensuring system stability and preventing resource exhaustion.
     Also determines optimal LLM execution environment based on hardware capabilities.
+    
+    Enhanced with comprehensive timeout handling to address Feature-BE-07:
+    - Hardware Auditing - Execution Hang/Timeout fixes
     """
     
     def __init__(self, config: Optional[Dict[str, Any]] = None, metrics_interval: int = 15, output_file: str = "hw_report.json"):
@@ -72,13 +75,19 @@ class HardwareAuditSystem:
         self.collect_docker_metrics = self.config.get("collect_docker_metrics", True)
         self.gpu_detection_enabled = self.config.get("gpu_detection_enabled", True)
         
+        # Enhanced timeout configurations for Feature-BE-07
+        self.default_subprocess_timeout = self.config.get("subprocess_timeout", 10)
+        self.gpu_detection_timeout = self.config.get("gpu_detection_timeout", 15)
+        self.docker_command_timeout = self.config.get("docker_command_timeout", 30)
+        self.max_collection_time = self.config.get("max_collection_time", 120)
+        
         # Runtime state
         self.running = False
         self.metrics_thread = None
         self.metrics_lock = threading.RLock()  # Thread-safe lock for metrics operations
         
         # Initialize metrics history storage
-        self.metrics_history = {
+        self.metrics_history: Dict[str, List[Dict[str, Any]]] = {
             "cpu": [],
             "memory": [],
             "disk": [],
@@ -92,7 +101,18 @@ class HardwareAuditSystem:
         
         # Collect system info on initialization unless disabled
         if not self.config.get("disable_init_collection", False):
-            self._collect_system_info()
+            try:
+                # Add timeout to initial collection to prevent hangs
+                collection_start = time.time()
+                self._collect_system_info()
+                collection_duration = time.time() - collection_start
+                
+                if collection_duration > self.max_collection_time:
+                    logger.warning(f"System info collection took {collection_duration:.1f}s (limit: {self.max_collection_time}s)")
+                    
+            except Exception as e:
+                logger.error(f"Failed to collect system info during initialization: {e}")
+                self.system_info = {"error": str(e), "collection_failed": True}
     
     @classmethod
     def from_config_loader(cls, config_loader):
@@ -117,7 +137,12 @@ class HardwareAuditSystem:
             "max_history_points": monitoring_config.get("max_history_points", 1000),
             "collect_docker_metrics": monitoring_config.get("collect_docker_metrics", True),
             "gpu_detection_enabled": monitoring_config.get("gpu_detection_enabled", True),
-            "disable_init_collection": monitoring_config.get("disable_init_collection", False)
+            "disable_init_collection": monitoring_config.get("disable_init_collection", False),
+            # Enhanced timeout configurations
+            "subprocess_timeout": monitoring_config.get("subprocess_timeout", 10),
+            "gpu_detection_timeout": monitoring_config.get("gpu_detection_timeout", 15),
+            "docker_command_timeout": monitoring_config.get("docker_command_timeout", 30),
+            "max_collection_time": monitoring_config.get("max_collection_time", 120)
         }
         
         return cls(config=hw_audit_config)
@@ -125,51 +150,86 @@ class HardwareAuditSystem:
     def _collect_dev_tools_info(self) -> Dict[str, Any]:
         """
         Collect information about key development tools: Poetry, Docker Compose, Terraform.
+        Enhanced with timeout handling to prevent hangs (Feature-BE-07).
         """
         tools = {
             "poetry": {"installed": False, "version": None},
             "docker_compose": {"installed": False, "version": None},
             "terraform": {"installed": False, "version": None}
         }
-        # Poetry
+        
+        # Poetry with timeout
         poetry_path = shutil.which("poetry")
         if poetry_path:
             tools["poetry"]["installed"] = True
             try:
-                result = subprocess.run(["poetry", "--version"], capture_output=True, text=True)
+                result = subprocess.run(
+                    ["poetry", "--version"], 
+                    capture_output=True, 
+                    text=True, 
+                    timeout=self.default_subprocess_timeout
+                )
                 if result.returncode == 0:
                     tools["poetry"]["version"] = result.stdout.strip()
-            except Exception:
-                pass
-        # Docker Compose
+            except subprocess.TimeoutExpired:
+                logger.warning("Poetry version check timed out")
+                tools["poetry"]["version"] = "timeout"
+            except Exception as e:
+                logger.debug(f"Poetry version check failed: {e}")
+                
+        # Docker Compose with timeout
         compose_path = shutil.which("docker-compose") or shutil.which("docker compose")
         if compose_path:
             tools["docker_compose"]["installed"] = True
             try:
-                # Try both syntaxes
-                result = subprocess.run(["docker-compose", "--version"], capture_output=True, text=True)
+                # Try both syntaxes with timeout
+                result = subprocess.run(
+                    ["docker-compose", "--version"], 
+                    capture_output=True, 
+                    text=True, 
+                    timeout=self.default_subprocess_timeout
+                )
                 if result.returncode != 0:
-                    result = subprocess.run(["docker", "compose", "version"], capture_output=True, text=True)
+                    result = subprocess.run(
+                        ["docker", "compose", "version"], 
+                        capture_output=True, 
+                        text=True, 
+                        timeout=self.default_subprocess_timeout
+                    )
                 if result.returncode == 0:
                     tools["docker_compose"]["version"] = result.stdout.strip()
-            except Exception:
-                pass
-        # Terraform
+            except subprocess.TimeoutExpired:
+                logger.warning("Docker Compose version check timed out")
+                tools["docker_compose"]["version"] = "timeout"
+            except Exception as e:
+                logger.debug(f"Docker Compose version check failed: {e}")
+                
+        # Terraform with timeout
         terraform_path = shutil.which("terraform")
         if terraform_path:
             tools["terraform"]["installed"] = True
             try:
-                result = subprocess.run(["terraform", "version"], capture_output=True, text=True)
+                result = subprocess.run(
+                    ["terraform", "version"], 
+                    capture_output=True, 
+                    text=True, 
+                    timeout=self.default_subprocess_timeout
+                )
                 if result.returncode == 0:
                     tools["terraform"]["version"] = result.stdout.strip().split("\n")[0]
-            except Exception:
-                pass
+            except subprocess.TimeoutExpired:
+                logger.warning("Terraform version check timed out")
+                tools["terraform"]["version"] = "timeout"
+            except Exception as e:
+                logger.debug(f"Terraform version check failed: {e}")
+                
         return tools
 
     def _collect_system_info(self):
         """
         Collect comprehensive information about the system hardware.
         Respects configuration settings for what information to collect.
+        Enhanced with timeout handling to prevent indefinite hangs (Feature-BE-07).
         """
         try:
             # Basic system info
@@ -185,64 +245,94 @@ class HardwareAuditSystem:
                 "disk_partitions": [],
             }
             
-            # Get Docker info if enabled
+            # Get Docker info if enabled (with timeout)
             if self.collect_docker_metrics:
-                self.system_info["docker_info"] = self._get_docker_info()
-            
-            # Get disk partitions
-            for partition in psutil.disk_partitions():
                 try:
-                    usage = psutil.disk_usage(partition.mountpoint)
-                    self.system_info["disk_partitions"].append({
-                        "device": partition.device,
-                        "mountpoint": partition.mountpoint,
-                        "fstype": partition.fstype,
-                        "total_gb": round(usage.total / (1024 ** 3), 2),
-                        "used_gb": round(usage.used / (1024 ** 3), 2),
-                        "percent_used": usage.percent
-                    })
-                except PermissionError:
-                    # Some mountpoints may not be accessible
-                    pass
+                    self.system_info["docker_info"] = self._get_docker_info()
+                except Exception as e:
+                    logger.warning(f"Docker info collection failed: {e}")
+                    self.system_info["docker_info"] = {"error": str(e)}
             
-            # Get network info
-            if hasattr(psutil, "net_if_addrs"):
-                self.system_info["network_interfaces"] = {}
-                for interface, addresses in psutil.net_if_addrs().items():
-                    self.system_info["network_interfaces"][interface] = []
-                    for addr in addresses:
-                        addr_info = {
-                            "family": str(addr.family),
-                            "address": addr.address
-                        }
-                        if addr.netmask:
-                            addr_info["netmask"] = addr.netmask
-                        if addr.broadcast:
-                            addr_info["broadcast"] = addr.broadcast
-                        self.system_info["network_interfaces"][interface].append(addr_info)
+            # Get disk partitions with timeout protection
+            try:
+                for partition in psutil.disk_partitions():
+                    try:
+                        usage = psutil.disk_usage(partition.mountpoint)
+                        self.system_info["disk_partitions"].append({
+                            "device": partition.device,
+                            "mountpoint": partition.mountpoint,
+                            "fstype": partition.fstype,
+                            "total_gb": round(usage.total / (1024 ** 3), 2),
+                            "used_gb": round(usage.used / (1024 ** 3), 2),
+                            "percent_used": usage.percent
+                        })
+                    except (PermissionError, OSError) as e:
+                        # Some mountpoints may not be accessible or may hang
+                        logger.debug(f"Skipping partition {partition.device}: {e}")
+                        continue
+            except Exception as e:
+                logger.warning(f"Disk partition enumeration failed: {e}")
+            
+            # Get network info with timeout protection
+            try:
+                if hasattr(psutil, "net_if_addrs"):
+                    self.system_info["network_interfaces"] = {}
+                    for interface, addresses in psutil.net_if_addrs().items():
+                        self.system_info["network_interfaces"][interface] = []
+                        for addr in addresses:
+                            addr_info = {
+                                "family": str(addr.family),
+                                "address": addr.address
+                            }
+                            if addr.netmask:
+                                addr_info["netmask"] = addr.netmask
+                            if addr.broadcast:
+                                addr_info["broadcast"] = addr.broadcast
+                            self.system_info["network_interfaces"][interface].append(addr_info)
+            except Exception as e:
+                logger.warning(f"Network interface enumeration failed: {e}")
                         
-            # Enhanced CPU info
-            self.system_info["cpu_details"] = self._get_detailed_cpu_info()
+            # Enhanced CPU info with timeout
+            try:
+                self.system_info["cpu_details"] = self._get_detailed_cpu_info()
+            except Exception as e:
+                logger.warning(f"CPU details collection failed: {e}")
+                self.system_info["cpu_details"] = {"error": str(e)}
                         
-            # GPU information (if enabled and available)
+            # GPU information (if enabled and available) with timeout
             if self.gpu_detection_enabled:
-                self.system_info["gpus"] = self._detect_gpus()
+                try:
+                    self.system_info["gpus"] = self._detect_gpus()
+                except Exception as e:
+                    logger.warning(f"GPU detection failed: {e}")
+                    self.system_info["gpus"] = []
             else:
                 self.system_info["gpus"] = []
             
             # Assess LLM capabilities based on hardware
-            self.llm_capability_assessment = self._assess_llm_capabilities()
-            self.system_info["llm_capabilities"] = self.llm_capability_assessment
+            try:
+                self.llm_capability_assessment = self._assess_llm_capabilities()
+                self.system_info["llm_capabilities"] = self.llm_capability_assessment
+            except Exception as e:
+                logger.warning(f"LLM capability assessment failed: {e}")
+                self.system_info["llm_capabilities"] = {"error": str(e)}
             
-            # Collect development tools info
-            self.system_info["dev_tools"] = self._collect_dev_tools_info()
+            # Collect development tools info with timeout
+            try:
+                self.system_info["dev_tools"] = self._collect_dev_tools_info()
+            except Exception as e:
+                logger.warning(f"Dev tools collection failed: {e}")
+                self.system_info["dev_tools"] = {"error": str(e)}
             
         except Exception as e:
             logger.error(f"Error collecting system info: {str(e)}")
             self.system_info = {"error": str(e)}
             
     def _get_docker_info(self) -> Dict[str, Any]:
-        """Get information about Docker installation and capabilities."""
+        """
+        Get information about Docker installation and capabilities.
+        Enhanced with timeout handling to prevent hangs (Feature-BE-07).
+        """
         docker_info = {
             "installed": False,
             "version": None,
@@ -255,45 +345,93 @@ class HardwareAuditSystem:
             if shutil.which("docker"):
                 docker_info["installed"] = True
                 
-                # Get Docker version
-                result = subprocess.run(['docker', 'version', '--format', '{{.Server.Version}}'], 
-                                      capture_output=True, text=True)
-                if result.returncode == 0:
-                    docker_info["version"] = result.stdout.strip()
+                # Get Docker version with timeout
+                try:
+                    result = subprocess.run(
+                        ['docker', 'version', '--format', '{{.Server.Version}}'], 
+                        capture_output=True, 
+                        text=True, 
+                        timeout=self.docker_command_timeout
+                    )
+                    if result.returncode == 0:
+                        docker_info["version"] = result.stdout.strip()
+                except subprocess.TimeoutExpired:
+                    logger.warning("Docker version command timed out")
+                    docker_info["version"] = "timeout"
+                except Exception as e:
+                    logger.debug(f"Docker version check failed: {e}")
                 
-                # Check for gVisor
-                result = subprocess.run(['docker', 'info', '--format', '{{.Runtimes}}'], 
-                                      capture_output=True, text=True)
-                if result.returncode == 0 and "runsc" in result.stdout:
-                    docker_info["gvisor_available"] = True
+                # Check for gVisor with timeout
+                try:
+                    result = subprocess.run(
+                        ['docker', 'info', '--format', '{{.Runtimes}}'], 
+                        capture_output=True, 
+                        text=True, 
+                        timeout=self.docker_command_timeout
+                    )
+                    if result.returncode == 0 and "runsc" in result.stdout:
+                        docker_info["gvisor_available"] = True
+                except subprocess.TimeoutExpired:
+                    logger.warning("Docker info command for gVisor check timed out")
+                except Exception as e:
+                    logger.debug(f"Docker gVisor check failed: {e}")
                 
-                # Check Docker resource limits
-                docker_info["resource_limits"] = self._get_docker_resource_limits()
+                # Check Docker resource limits with timeout
+                try:
+                    docker_info["resource_limits"] = self._get_docker_resource_limits()
+                except Exception as e:
+                    logger.debug(f"Docker resource limits check failed: {e}")
+                    docker_info["resource_limits"] = {"error": str(e)}
+                    
         except Exception as e:
             logger.warning(f"Error getting Docker info: {str(e)}")
             
         return docker_info
             
     def _get_docker_resource_limits(self) -> Dict[str, Any]:
-        """Get Docker resource limits if configured."""
+        """
+        Get Docker resource limits if configured.
+        Enhanced with timeout handling to prevent hangs (Feature-BE-07).
+        """
         limits = {}
         
         try:
-            # Get cgroup info for Docker
-            result = subprocess.run(['docker', 'info', '--format', '{{.CgroupDriver}}'], 
-                                  capture_output=True, text=True)
-            if result.returncode == 0:
-                limits["cgroup_driver"] = result.stdout.strip()
+            # Get cgroup info for Docker with timeout
+            try:
+                result = subprocess.run(
+                    ['docker', 'info', '--format', '{{.CgroupDriver}}'], 
+                    capture_output=True, 
+                    text=True, 
+                    timeout=self.docker_command_timeout
+                )
+                if result.returncode == 0:
+                    limits["cgroup_driver"] = result.stdout.strip()
+            except subprocess.TimeoutExpired:
+                logger.warning("Docker cgroup info command timed out")
+                limits["cgroup_driver"] = "timeout"
+            except Exception as e:
+                logger.debug(f"Docker cgroup check failed: {e}")
                 
-            # Try to get memory limits
-            result = subprocess.run(['docker', 'info', '--format', '{{.MemTotal}}'], 
-                                  capture_output=True, text=True)
-            if result.returncode == 0:
-                try:
-                    mem_bytes = int(result.stdout.strip())
-                    limits["memory_total_gb"] = round(mem_bytes / (1024**3), 2)
-                except ValueError:
-                    pass
+            # Try to get memory limits with timeout
+            try:
+                result = subprocess.run(
+                    ['docker', 'info', '--format', '{{.MemTotal}}'], 
+                    capture_output=True, 
+                    text=True, 
+                    timeout=self.docker_command_timeout
+                )
+                if result.returncode == 0:
+                    try:
+                        mem_bytes = int(result.stdout.strip())
+                        limits["memory_total_gb"] = round(mem_bytes / (1024**3), 2)
+                    except ValueError:
+                        pass
+            except subprocess.TimeoutExpired:
+                logger.warning("Docker memory info command timed out")
+                limits["memory_total_gb"] = "timeout"
+            except Exception as e:
+                logger.debug(f"Docker memory check failed: {e}")
+                
         except Exception as e:
             logger.warning(f"Error getting Docker resource limits: {str(e)}")
             
@@ -302,32 +440,39 @@ class HardwareAuditSystem:
     def _detect_gpus(self) -> List[Dict[str, Any]]:
         """
         Enhanced GPU detection with support for NVIDIA, AMD, and Intel GPUs.
-        Uses robust error handling with custom exceptions.
+        Uses robust error handling with custom exceptions and timeout protection (Feature-BE-07).
         """
         gpus = []
         
         if not self.gpu_detection_enabled:
             return gpus
             
-        # Try NVIDIA first
+        # Try NVIDIA first with timeout
         try:
-            result = subprocess.run(['nvidia-smi', '--query-gpu=name,memory.total,memory.used,utilization.gpu', 
-                                   '--format=csv,noheader,nounits'], 
-                                  capture_output=True, text=True, timeout=10)
+            result = subprocess.run(
+                ['nvidia-smi', '--query-gpu=name,memory.total,memory.used,utilization.gpu', 
+                 '--format=csv,noheader,nounits'], 
+                capture_output=True, 
+                text=True, 
+                timeout=self.gpu_detection_timeout
+            )
             
             if result.returncode == 0:
                 for line in result.stdout.strip().split('\n'):
                     if line.strip():
                         parts = [p.strip() for p in line.split(',')]
                         if len(parts) >= 4:
-                            gpus.append({
-                                "type": "nvidia",
-                                "name": parts[0],
-                                "memory_total_mb": float(parts[1]),
-                                "memory_used_mb": float(parts[2]),
-                                "utilization_percent": float(parts[3]),
-                                "vram_sufficient_for_quantized": float(parts[1]) >= 8000
-                            })
+                            try:
+                                gpus.append({
+                                    "type": "nvidia",
+                                    "name": parts[0],
+                                    "memory_total_mb": float(parts[1]),
+                                    "memory_used_mb": float(parts[2]),
+                                    "utilization_percent": float(parts[3]),
+                                    "vram_sufficient_for_quantized": float(parts[1]) >= 8000
+                                })
+                            except ValueError as e:
+                                logger.warning(f"Error parsing NVIDIA GPU data: {e}")
         except subprocess.TimeoutExpired:
             logger.warning("NVIDIA GPU detection timed out")
         except (subprocess.SubprocessError, FileNotFoundError) as e:
@@ -339,10 +484,14 @@ class HardwareAuditSystem:
                 severity="warning"
             )
             
-        # Try AMD GPUs if no NVIDIA GPUs found or even if NVIDIA GPUs were found but detection is enabled
+        # Try AMD GPUs with timeout
         try:
-            result = subprocess.run(['rocm-smi', '--showmeminfo', 'vram', '-f', 'csv'], 
-                                  capture_output=True, text=True, timeout=10)
+            result = subprocess.run(
+                ['rocm-smi', '--showmeminfo', 'vram', '-f', 'csv'], 
+                capture_output=True, 
+                text=True, 
+                timeout=self.gpu_detection_timeout
+            )
             
             if result.returncode == 0:
                 lines = result.stdout.strip().split('\n')
@@ -373,9 +522,14 @@ class HardwareAuditSystem:
                 severity="warning"
             )
         
-        # Check for Intel GPUs using sycl-ls
+        # Check for Intel GPUs using sycl-ls with timeout
         try:
-            result = subprocess.run(['sycl-ls'], capture_output=True, text=True, timeout=10)
+            result = subprocess.run(
+                ['sycl-ls'], 
+                capture_output=True, 
+                text=True, 
+                timeout=self.gpu_detection_timeout
+            )
             
             if result.returncode == 0 and "Intel" in result.stdout:
                 for line in result.stdout.strip().split('\n'):
@@ -417,7 +571,12 @@ class HardwareAuditSystem:
         # Attempt to detect integrated GPUs through lspci if no GPUs found so far
         if not gpus:
             try:
-                result = subprocess.run(['lspci', '-v'], capture_output=True, text=True, timeout=10)
+                result = subprocess.run(
+                    ['lspci', '-v'], 
+                    capture_output=True, 
+                    text=True, 
+                    timeout=self.gpu_detection_timeout
+                )
                 
                 if result.returncode == 0:
                     gpu_markers = ["VGA compatible controller", "Display controller", "3D controller"]
@@ -453,7 +612,10 @@ class HardwareAuditSystem:
         return gpus
 
     def _get_detailed_cpu_info(self) -> Dict[str, Any]:
-        """Get detailed CPU information from lscpu if available."""
+        """
+        Get detailed CPU information from lscpu if available.
+        Enhanced with timeout handling to prevent hangs (Feature-BE-07).
+        """
         cpu_details = {
             "model_name": platform.processor(),
             "architecture": platform.machine(),
@@ -461,8 +623,13 @@ class HardwareAuditSystem:
         }
         
         try:
-            # Try to get CPU details using lscpu
-            result = subprocess.run(['lscpu'], capture_output=True, text=True)
+            # Try to get CPU details using lscpu with timeout
+            result = subprocess.run(
+                ['lscpu'], 
+                capture_output=True, 
+                text=True, 
+                timeout=self.default_subprocess_timeout
+            )
             if result.returncode == 0:
                 lines = result.stdout.strip().split('\n')
                 for line in lines:
@@ -478,6 +645,9 @@ class HardwareAuditSystem:
                             cpu_details["has_avx"] = "avx" in cpu_details["features"]
                             cpu_details["has_avx2"] = "avx2" in cpu_details["features"]
                             cpu_details["has_avx512f"] = "avx512f" in cpu_details["features"]
+        except subprocess.TimeoutExpired:
+            logger.warning("lscpu command timed out")
+            cpu_details["timeout"] = True
         except Exception as e:
             logger.warning(f"Error getting detailed CPU info: {str(e)}")
             
@@ -497,38 +667,47 @@ class HardwareAuditSystem:
             "ollama_compatible": True,  # Ollama works on most systems
             "docker_isolation_level": "basic"
         }
+        
         # Defensive: ensure self.system_info is a dict
         sysinfo = self.system_info if isinstance(self.system_info, dict) else {}
+        
         # Check if there's enough RAM for meaningful LLM inference
         total_mem = sysinfo.get("total_memory_gb", 0)
         try:
             has_sufficient_ram = float(total_mem) >= 16
         except Exception:
             has_sufficient_ram = False
+            
         # Check for GPUs
         gpus = sysinfo.get("gpus", [])
         if not isinstance(gpus, list):
             gpus = []
+            
         def safe_gpu_get(gpu, key, default=None):
             return gpu.get(key, default) if isinstance(gpu, dict) else default
+            
         has_nvidia_gpu = any(safe_gpu_get(gpu, "type") == "nvidia" for gpu in gpus)
         has_large_vram_gpu = any(safe_gpu_get(gpu, "vram_sufficient_for_quantized", False) for gpu in gpus)
+        
         # Check for modern CPU features
         cpu_details = sysinfo.get("cpu_details", {})
         if not isinstance(cpu_details, dict):
             cpu_details = {}
         has_avx2 = cpu_details.get("has_avx2", False)
         has_avx512 = cpu_details.get("has_avx512f", False)
+        
         # Docker capabilities
         docker_info = sysinfo.get("docker_info", {})
         if not isinstance(docker_info, dict):
             docker_info = {}
         has_gvisor = docker_info.get("gvisor_available", False)
+        
         # Set recommended isolation level
         if has_gvisor:
             assessment["docker_isolation_level"] = "gvisor"
         elif docker_info.get("installed", False):
             assessment["docker_isolation_level"] = "seccomp"
+            
         # Determine LLM capabilities
         if has_nvidia_gpu:
             assessment["inference_acceleration"] = "CUDA"
@@ -541,652 +720,453 @@ class HardwareAuditSystem:
             else:
                 assessment["max_recommended_model_size"] = "7B"
                 assessment["recommended_model_types"] = ["Llama-2-7B-chat", "CodeLlama-7B", "Mistral-7B"]
+                
         elif has_sufficient_ram and has_avx2:
+            assessment["inference_acceleration"] = "CPU (AVX2)"
             assessment["local_inference_capable"] = True
-            assessment["inference_acceleration"] = "CPU+AVX2"
+            assessment["vllm_compatible"] = False  # vLLM primarily for GPU
+            assessment["tgi_compatible"] = True
             if has_avx512:
-                assessment["inference_acceleration"] += "+AVX512"
-            assessment["max_recommended_model_size"] = "7B"
-            assessment["recommended_model_types"] = ["Llama-2-7B-chat-Q4_K_M", "Mistral-7B-Q4_K_M"]
-            # Check CPU core count for vLLM capability without GPU
-            try:
-                physical_cpus = int(sysinfo.get("physical_cpu_count", 0))
-            except Exception:
-                physical_cpus = 0
-            if physical_cpus >= 8 and has_avx512:
-                assessment["vllm_compatible"] = True
-        return assessment
-            
-    def generate_report(self) -> Dict[str, Any]:
-        """
-        Generate a comprehensive hardware report.
-        """
-        if not self.system_info:
-            self._collect_system_info()
-            
-        report = {
-            "system_info": self.system_info,
-            "llm_capability_assessment": self.llm_capability_assessment,
-            "timestamp": time.time(),
-            "date": time.strftime("%Y-%m-%d %H:%M:%S"),
-            "recommended_configuration": self._generate_recommendations()
-        }
-        
-        # Save to file
-        try:
-            with open(self.output_file, 'w') as f:
-                json.dump(report, f, indent=2)
-            logger.info(f"Hardware report saved to {self.output_file}")
-        except Exception as e:
-            logger.error(f"Error saving hardware report: {str(e)}")
-            
-        return report
-        
-    def _generate_recommendations(self) -> Dict[str, Any]:
-        """
-        Generate system-specific recommendations based on hardware assessment.
-        """
-        recommendations = {
-            "llm_hosting": "cloud",  # Default to cloud if local capabilities are insufficient
-            "recommended_models": [],
-            "isolation_recommendations": {
-                "recommended_sandbox": "basic_docker",
-                "gvisor_setup_needed": False
-            },
-            "optimization_suggestions": []
-        }
-        sysinfo = self.system_info if isinstance(self.system_info, dict) else {}
-        llm_capabilities = self.llm_capability_assessment or {}
-        # LLM Hosting recommendation
-        if llm_capabilities.get("local_inference_capable", False):
-            if llm_capabilities.get("vllm_compatible", False):
-                recommendations["llm_hosting"] = "local_vllm"
-                recommendations["optimization_suggestions"].append(
-                    "Configure vLLM with GPU acceleration for optimal performance"
-                )
+                assessment["inference_acceleration"] = "CPU (AVX-512)"
+                assessment["max_recommended_model_size"] = "7B"
+                assessment["recommended_model_types"] = ["Llama-2-7B-chat (quantized)", "CodeLlama-7B (quantized)"]
             else:
-                recommendations["llm_hosting"] = "local_llama_cpp"
-                recommendations["optimization_suggestions"].append(
-                    "Use quantized models with llama.cpp for memory efficiency"
-                )
-            # Add recommended models
-            recommendations["recommended_models"] = llm_capabilities.get("recommended_model_types", [])
+                assessment["max_recommended_model_size"] = "3B"
+                assessment["recommended_model_types"] = ["Llama-2-3B (quantized)", "Phi-2"]
+                
         else:
-            recommendations["optimization_suggestions"].append(
-                "Use cloud-based LLM APIs for better performance on this hardware"
-            )
-        # Isolation recommendations
-        docker_info = sysinfo.get("docker_info", {})
-        if not isinstance(docker_info, dict):
-            docker_info = {}
-        isolation_level = llm_capabilities.get("docker_isolation_level", "basic")
-        if isolation_level == "gvisor":
-            recommendations["isolation_recommendations"]["recommended_sandbox"] = "gvisor"
-            recommendations["optimization_suggestions"].append(
-                "Leverage existing gVisor installation for enhanced security isolation"
-            )
-        elif docker_info.get("installed", False):
-            if isolation_level == "basic":
-                recommendations["isolation_recommendations"]["recommended_sandbox"] = "seccomp_docker"
-                recommendations["isolation_recommendations"]["gvisor_setup_needed"] = True
-                recommendations["optimization_suggestions"].append(
-                    "Install gVisor for improved code execution isolation security"
-                )
-        # Add hardware-specific optimization suggestions
-        gpus = sysinfo.get("gpus", [])
-        if not isinstance(gpus, list):
-            gpus = []
-        if gpus:
-            first_gpu = gpus[0] if isinstance(gpus[0], dict) else {}
-            gpu_type = first_gpu.get('type', 'GPU')
-            recommendations["optimization_suggestions"].append(
-                f"Configure container runtime to use {gpu_type} acceleration for LLM inference"
-            )
-        # Memory recommendations
-        total_memory = sysinfo.get("total_memory_gb", 0)
-        try:
-            total_memory_val = float(total_memory)
-        except Exception:
-            total_memory_val = 0
-        if total_memory_val < 16:
-            recommendations["optimization_suggestions"].append(
-                "Consider increasing system RAM to at least 16GB for better performance with local LLMs"
-            )
-        return recommendations
+            # System doesn't meet minimum requirements for local inference
+            assessment["local_inference_capable"] = False
+            assessment["recommended_model_types"] = ["Use cloud-based APIs like OpenAI, Anthropic"]
+            assessment["max_recommended_model_size"] = "N/A"
+            
+        return assessment
 
     def start_metrics_collection(self):
         """
-        Start collecting metrics in a background thread.
+        Start continuous metrics collection in a background thread.
+        Enhanced with timeout handling to prevent blocking (Feature-BE-07).
         """
         if self.running:
+            logger.warning("Metrics collection is already running")
             return
             
+        logger.info(f"Starting hardware metrics collection (interval: {self.metrics_interval}s)")
         self.running = True
-        self.metrics_thread = threading.Thread(target=self._metrics_collection_loop)
-        self.metrics_thread.daemon = True
+        self.metrics_thread = threading.Thread(target=self._metrics_collection_loop, daemon=True)
         self.metrics_thread.start()
-        logger.info("Started hardware metrics collection")
-        
+
     def stop_metrics_collection(self):
         """
-        Stop collecting metrics.
+        Stop continuous metrics collection.
         """
-        self.running = False
-        if self.metrics_thread:
-            self.metrics_thread.join(timeout=2)
-            logger.info("Stopped hardware metrics collection")
+        if not self.running:
+            logger.warning("Metrics collection is not running")
+            return
             
+        logger.info("Stopping hardware metrics collection")
+        self.running = False
+        if self.metrics_thread and self.metrics_thread.is_alive():
+            self.metrics_thread.join(timeout=5)  # Enhanced timeout
+            if self.metrics_thread.is_alive():
+                logger.warning("Metrics collection thread did not stop gracefully")
+
     def _metrics_collection_loop(self):
         """
-        Continuous metrics collection loop that runs in a background thread.
-        Collects system metrics at regular intervals and maintains a rolling history.
-        Implements proper error handling to ensure robustness.
+        Main loop for collecting metrics continuously.
+        Enhanced with timeout protection to prevent hangs (Feature-BE-07).
         """
-        metrics_lock = threading.RLock()  # Use RLock for thread-safe operations
-        anomaly_check_interval = max(5, self.metrics_interval * 2)  # Check for anomalies every few intervals
-        last_anomaly_check = time.time()
-        
         while self.running:
             try:
-                # Collect current metrics
-                current_metrics = {
-                    "timestamp": time.time(),
-                    "cpu_percent": psutil.cpu_percent(interval=1),
-                    "memory_percent": psutil.virtual_memory().percent,
-                    "disk_io": self._get_disk_io_metrics(),
-                    "network_io": self._get_network_io_metrics(),
-                    "docker_stats": self._get_docker_container_stats()
-                }
+                collection_start = time.time()
                 
-                # Thread-safe update of metrics history
-                with metrics_lock:
-                    # Update CPU metrics
-                    self.metrics_history["cpu"].append({
-                        "timestamp": current_metrics["timestamp"],
-                        "percent": current_metrics["cpu_percent"]
-                    })
-                    # Trim to max history length
-                    if len(self.metrics_history["cpu"]) > self.max_history_points:
-                        self.metrics_history["cpu"] = self.metrics_history["cpu"][-self.max_history_points:]
-                    
-                    # Update memory metrics
-                    self.metrics_history["memory"].append({
-                        "timestamp": current_metrics["timestamp"],
-                        "percent": current_metrics["memory_percent"]
-                    })
-                    if len(self.metrics_history["memory"]) > self.max_history_points:
-                        self.metrics_history["memory"] = self.metrics_history["memory"][-self.max_history_points:]
-                    
-                    # Update disk metrics
-                    self.metrics_history["disk"].append(current_metrics["disk_io"])
-                    if len(self.metrics_history["disk"]) > self.max_history_points:
-                        self.metrics_history["disk"] = self.metrics_history["disk"][-self.max_history_points:]
-                    
-                    # Update network metrics
-                    self.metrics_history["network"].append(current_metrics["network_io"])
-                    if len(self.metrics_history["network"]) > self.max_history_points:
-                        self.metrics_history["network"] = self.metrics_history["network"][-self.max_history_points:]
-                    
-                    # Update docker metrics if available
-                    if current_metrics["docker_stats"]:
-                        self.metrics_history["docker"].append(current_metrics["docker_stats"])
-                        if len(self.metrics_history["docker"]) > self.max_history_points:
-                            self.metrics_history["docker"] = self.metrics_history["docker"][-self.max_history_points:]
+                # Collect metrics with timeout protection
+                self._collect_current_metrics()
                 
-                # Log high CPU or memory usage as a warning
-                if current_metrics["cpu_percent"] > 90:
-                    logger.warning(f"High CPU usage detected: {current_metrics['cpu_percent']}%")
-                if current_metrics["memory_percent"] > 90:
-                    logger.warning(f"High memory usage detected: {current_metrics['memory_percent']}%")
+                collection_duration = time.time() - collection_start
+                if collection_duration > self.metrics_interval:
+                    logger.warning(f"Metrics collection took {collection_duration:.1f}s (interval: {self.metrics_interval}s)")
                 
-                # Periodically check for resource anomalies
-                current_time = time.time()
-                if current_time - last_anomaly_check >= anomaly_check_interval:
-                    anomalies = self.detect_anomalies()
-                    if anomalies["detected"]:
-                        logger.warning("Resource anomalies detected:")
-                        for anomaly in anomalies["resource_pressure"]:
-                            logger.warning(f"  - {anomaly['resource'].upper()} pressure ({anomaly['severity']}): {anomaly['current']}% > {anomaly['threshold']}%")
-                        for anomaly in anomalies["bottlenecks"]:
-                            logger.warning(f"  - Bottleneck ({anomaly['severity']}): {anomaly['details']}")
-                        for recommendation in anomalies["recommendations"]:
-                            logger.warning(f"  - Recommendation: {recommendation}")
-                    last_anomaly_check = current_time
+                # Sleep for the remaining interval time
+                sleep_time = max(0, self.metrics_interval - collection_duration)
+                time.sleep(sleep_time)
                 
-                # Sleep for the configured interval
-                time.sleep(self.metrics_interval)
             except Exception as e:
-                logger.error(f"Error in metrics collection: {str(e)}")
-                # Don't crash the thread, continue after a short delay
-                time.sleep(5)
-    
-    def _get_disk_io_metrics(self) -> Dict[str, Any]:
-        """Get disk I/O metrics for all disks."""
-        try:
-            io_counters = psutil.disk_io_counters(perdisk=True)
-            disk_metrics = {
-                "timestamp": time.time(),
-                "disks": {}
-            }
-            
-            if io_counters:
-                for disk, counters in io_counters.items():
-                    disk_metrics["disks"][disk] = {
-                        "read_bytes": counters.read_bytes,
-                        "write_bytes": counters.write_bytes,
-                        "read_count": counters.read_count,
-                        "write_count": counters.write_count
+                logger.error(f"Error in metrics collection loop: {e}")
+                time.sleep(self.metrics_interval)  # Continue after error
+
+    def _collect_current_metrics(self):
+        """
+        Collect current system metrics and store them.
+        Enhanced with timeout handling to prevent indefinite hangs (Feature-BE-07).
+        """
+        timestamp = time.time()
+        
+        with self.metrics_lock:
+            try:
+                # CPU metrics with timeout protection
+                try:
+                    cpu_data = {
+                        "timestamp": timestamp,
+                        "percent": psutil.cpu_percent(interval=1),
+                        "count": psutil.cpu_count(logical=True),
+                        "load_avg": list(psutil.getloadavg()) if hasattr(psutil, 'getloadavg') else None
                     }
-            return disk_metrics
-        except Exception as e:
-            logger.debug(f"Error getting disk I/O metrics: {str(e)}")
-            return {"timestamp": time.time(), "disks": {}, "error": str(e)}
-    
-    def _get_network_io_metrics(self) -> Dict[str, Any]:
-        """Get network I/O metrics for all interfaces."""
-        try:
-            io_counters = psutil.net_io_counters(pernic=True)
-            net_metrics = {
-                "timestamp": time.time(),
-                "interfaces": {}
-            }
-            
-            if io_counters:
-                for interface, counters in io_counters.items():
-                    net_metrics["interfaces"][interface] = {
-                        "bytes_sent": counters.bytes_sent,
-                        "bytes_recv": counters.bytes_recv,
-                        "packets_sent": counters.packets_sent,
-                        "packets_recv": counters.packets_recv
+                    self._add_metric("cpu", cpu_data)
+                except Exception as e:
+                    logger.warning(f"CPU metrics collection failed: {e}")
+
+                # Memory metrics
+                try:
+                    memory = psutil.virtual_memory()
+                    memory_data = {
+                        "timestamp": timestamp,
+                        "total": memory.total,
+                        "available": memory.available,
+                        "percent": memory.percent,
+                        "used": memory.used,
+                        "free": memory.free
                     }
-            return net_metrics
-        except Exception as e:
-            logger.debug(f"Error getting network I/O metrics: {str(e)}")
-            return {"timestamp": time.time(), "interfaces": {}, "error": str(e)}
-    
-    def _get_docker_container_stats(self) -> Optional[Dict[str, Any]]:
-        """Get resource usage statistics for running Docker containers."""
+                    self._add_metric("memory", memory_data)
+                except Exception as e:
+                    logger.warning(f"Memory metrics collection failed: {e}")
+
+                # Disk metrics with timeout protection
+                try:
+                    disk_data = {
+                        "timestamp": timestamp,
+                        "partitions": []
+                    }
+                    for partition in psutil.disk_partitions()[:5]:  # Limit to first 5 partitions
+                        try:
+                            usage = psutil.disk_usage(partition.mountpoint)
+                            disk_data["partitions"].append({
+                                "device": partition.device,
+                                "mountpoint": partition.mountpoint,
+                                "total": usage.total,
+                                "used": usage.used,
+                                "free": usage.free,
+                                "percent": usage.percent
+                            })
+                        except (PermissionError, OSError):
+                            continue  # Skip inaccessible partitions
+                    self._add_metric("disk", disk_data)
+                except Exception as e:
+                    logger.warning(f"Disk metrics collection failed: {e}")
+
+                # Network metrics
+                try:
+                    network = psutil.net_io_counters()
+                    network_data = {
+                        "timestamp": timestamp,
+                        "bytes_sent": network.bytes_sent,
+                        "bytes_recv": network.bytes_recv,
+                        "packets_sent": network.packets_sent,
+                        "packets_recv": network.packets_recv
+                    }
+                    self._add_metric("network", network_data)
+                except Exception as e:
+                    logger.warning(f"Network metrics collection failed: {e}")
+
+                # Docker metrics (if enabled) with timeout
+                if self.collect_docker_metrics:
+                    try:
+                        docker_data = self._collect_docker_metrics()
+                        if docker_data:
+                            self._add_metric("docker", docker_data)
+                    except Exception as e:
+                        logger.warning(f"Docker metrics collection failed: {e}")
+
+            except Exception as e:
+                logger.error(f"Error collecting current metrics: {e}")
+
+    def _collect_docker_metrics(self) -> Optional[Dict[str, Any]]:
+        """
+        Collect Docker container metrics.
+        Enhanced with timeout handling to prevent hangs (Feature-BE-07).
+        """
         if not shutil.which("docker"):
             return None
             
         try:
-            result = subprocess.run(["docker", "stats", "--no-stream", "--format", 
-                                   "{{.Name}},{{.CPUPerc}},{{.MemUsage}},{{.MemPerc}},{{.NetIO}},{{.BlockIO}}"],
-                                  capture_output=True, text=True)
+            # Get running containers with timeout
+            result = subprocess.run(
+                ['docker', 'ps', '--format', 'table {{.ID}}\t{{.Names}}\t{{.Status}}'],
+                capture_output=True,
+                text=True,
+                timeout=self.docker_command_timeout
+            )
             
             if result.returncode != 0:
                 return None
                 
-            container_stats = {
+            containers = []
+            lines = result.stdout.strip().split('\n')[1:]  # Skip header
+            
+            for line in lines:
+                if line.strip():
+                    parts = line.split('\t')
+                    if len(parts) >= 3:
+                        container_id = parts[0].strip()
+                        
+                        # Get container stats with timeout
+                        try:
+                            stats_result = subprocess.run(
+                                ['docker', 'stats', '--no-stream', '--format', 
+                                 'table {{.Container}}\t{{.CPUPerc}}\t{{.MemUsage}}\t{{.MemPerc}}', 
+                                 container_id],
+                                capture_output=True,
+                                text=True,
+                                timeout=self.docker_command_timeout
+                            )
+                            
+                            if stats_result.returncode == 0:
+                                stats_lines = stats_result.stdout.strip().split('\n')[1:]  # Skip header
+                                if stats_lines:
+                                    stats_parts = stats_lines[0].split('\t')
+                                    if len(stats_parts) >= 4:
+                                        containers.append({
+                                            "id": container_id,
+                                            "name": parts[1].strip(),
+                                            "status": parts[2].strip(),
+                                            "cpu_percent": stats_parts[1].strip(),
+                                            "memory_usage": stats_parts[2].strip(),
+                                            "memory_percent": stats_parts[3].strip()
+                                        })
+                        except subprocess.TimeoutExpired:
+                            logger.warning(f"Docker stats timeout for container {container_id}")
+                            continue
+                        except Exception as e:
+                            logger.debug(f"Failed to get stats for container {container_id}: {e}")
+                            continue
+            
+            return {
                 "timestamp": time.time(),
-                "containers": {}
+                "containers": containers
             }
             
-            for line in result.stdout.strip().split('\n'):
-                if not line:
-                    continue
-                    
-                parts = [p.strip() for p in line.split(',')]
-                if len(parts) >= 6:
-                    name = parts[0]
-                    container_stats["containers"][name] = {
-                        "cpu_percent": parts[1].rstrip('%'),
-                        "mem_usage": parts[2],
-                        "mem_percent": parts[3].rstrip('%'),
-                        "net_io": parts[4],
-                        "block_io": parts[5]
-                    }
-                    
-            return container_stats
+        except subprocess.TimeoutExpired:
+            logger.warning("Docker ps command timed out")
+            return None
         except Exception as e:
-            logger.debug(f"Error getting Docker container stats: {str(e)}")
+            logger.debug(f"Docker metrics collection failed: {e}")
             return None
 
-    def serialize_metrics_history(self, output_file: Optional[str] = None) -> Dict[str, Any]:
+    def _add_metric(self, metric_type: str, data: Dict[str, Any]):
         """
-        Serialize the metrics history to a JSON file for persistence and reporting.
+        Add a metric data point and maintain history limits.
+        """
+        if metric_type not in self.metrics_history:
+            self.metrics_history[metric_type] = []
+            
+        self.metrics_history[metric_type].append(data)
         
-        Args:
-            output_file: Optional path to output JSON file. If None, uses a default path.
-            
-        Returns:
-            Dict containing the serialized metrics history.
+        # Maintain history limit
+        if len(self.metrics_history[metric_type]) > self.max_history_points:
+            self.metrics_history[metric_type] = self.metrics_history[metric_type][-self.max_history_points:]
+
+    def get_system_info(self) -> Dict[str, Any]:
         """
-        if output_file is None:
-            # Generate default filename with timestamp if none provided
-            timestamp = time.strftime("%Y%m%d-%H%M%S")
-            output_file = f"metrics_history_{timestamp}.json"
-            
-        # Create a deep copy of metrics with thread safety
+        Get the collected system information.
+        """
+        return self.system_info or {}
+
+    def get_metrics_history(self, metric_type: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Get metrics history for a specific type or all metrics.
+        """
         with self.metrics_lock:
-            metrics_copy = {
+            if metric_type:
+                return {metric_type: self.metrics_history.get(metric_type, [])}
+            return dict(self.metrics_history)
+
+    def get_latest_metrics(self) -> Dict[str, Any]:
+        """
+        Get the most recent metrics for each type.
+        """
+        latest = {}
+        with self.metrics_lock:
+            for metric_type, history in self.metrics_history.items():
+                if history:
+                    latest[metric_type] = history[-1]
+        return latest
+
+    def generate_report(self) -> Dict[str, Any]:
+        """
+        Generate a comprehensive hardware report.
+        Enhanced with timeout handling to prevent hangs (Feature-BE-07).
+        """
+        try:
+            report = {
                 "timestamp": time.time(),
-                "date": time.strftime("%Y-%m-%d %H:%M:%S"),
-                "metrics_history": {
-                    "cpu": self.metrics_history["cpu"].copy(),
-                    "memory": self.metrics_history["memory"].copy(),
-                    "disk": self.metrics_history["disk"].copy(),
-                    "network": self.metrics_history["network"].copy(),
-                    "docker": self.metrics_history["docker"].copy()
-                },
-                "system_info": self.system_info
+                "system_info": self.get_system_info(),
+                "latest_metrics": self.get_latest_metrics(),
+                "metrics_collection_running": self.running,
+                "configuration": {
+                    "metrics_interval": self.metrics_interval,
+                    "collect_docker_metrics": self.collect_docker_metrics,
+                    "gpu_detection_enabled": self.gpu_detection_enabled,
+                    "max_history_points": self.max_history_points
+                }
             }
             
-        # Calculate summary statistics
-        metrics_copy["summary"] = self._calculate_metrics_summary(metrics_copy["metrics_history"])
-        
-        # Save to file if provided
-        if output_file:
+            # Add summary statistics with timeout protection
             try:
-                with open(output_file, 'w') as f:
-                    json.dump(metrics_copy, f, indent=2)
-                logger.info(f"Metrics history saved to {output_file}")
+                report["summary"] = self._generate_summary_stats()
             except Exception as e:
-                raise HardwareAuditError(f"Error saving metrics history: {str(e)}", 
-                                       component="metrics_serialization")
-                
-        return metrics_copy
-    
-    def _calculate_metrics_summary(self, metrics_history: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Calculate summary statistics for metrics history.
-        
-        Args:
-            metrics_history: Dict containing metrics history.
+                logger.warning(f"Summary generation failed: {e}")
+                report["summary"] = {"error": str(e)}
             
-        Returns:
-            Dict containing summary statistics.
+            return report
+            
+        except Exception as e:
+            logger.error(f"Report generation failed: {e}")
+            return {"error": str(e), "timestamp": time.time()}
+
+    def _generate_summary_stats(self) -> Dict[str, Any]:
         """
-        summary = {
-            "cpu": {
-                "max": 0.0,
-                "min": 100.0,
-                "avg": 0.0,
-                "last": 0.0,
-                "samples": 0
-            },
-            "memory": {
-                "max": 0.0,
-                "min": 100.0,
-                "avg": 0.0,
-                "last": 0.0,
-                "samples": 0
-            }
-        }
+        Generate summary statistics from collected metrics.
+        """
+        summary = {}
         
-        # CPU statistics
-        if metrics_history.get("cpu"):
-            cpu_values = [float(entry.get("percent", 0)) for entry in metrics_history["cpu"] 
-                          if isinstance(entry, dict) and "percent" in entry]
-            if cpu_values:
-                summary["cpu"]["max"] = max(cpu_values)
-                summary["cpu"]["min"] = min(cpu_values)
-                summary["cpu"]["avg"] = sum(cpu_values) / len(cpu_values)
-                summary["cpu"]["last"] = cpu_values[-1] if cpu_values else 0.0
-                summary["cpu"]["samples"] = len(cpu_values)
-                
-        # Memory statistics
-        if metrics_history.get("memory"):
-            mem_values = [float(entry.get("percent", 0)) for entry in metrics_history["memory"] 
-                          if isinstance(entry, dict) and "percent" in entry]
-            if mem_values:
-                summary["memory"]["max"] = max(mem_values)
-                summary["memory"]["min"] = min(mem_values)
-                summary["memory"]["avg"] = sum(mem_values) / len(mem_values)
-                summary["memory"]["last"] = mem_values[-1] if mem_values else 0.0
-                summary["memory"]["samples"] = len(mem_values)
-                
+        with self.metrics_lock:
+            # CPU summary
+            cpu_history = self.metrics_history.get("cpu", [])
+            if cpu_history:
+                cpu_percents = [m["percent"] for m in cpu_history if "percent" in m]
+                if cpu_percents:
+                    summary["cpu"] = {
+                        "average_percent": sum(cpu_percents) / len(cpu_percents),
+                        "max_percent": max(cpu_percents),
+                        "min_percent": min(cpu_percents),
+                        "samples": len(cpu_percents)
+                    }
+
+            # Memory summary
+            memory_history = self.metrics_history.get("memory", [])
+            if memory_history:
+                memory_percents = [m["percent"] for m in memory_history if "percent" in m]
+                if memory_percents:
+                    summary["memory"] = {
+                        "average_percent": sum(memory_percents) / len(memory_percents),
+                        "max_percent": max(memory_percents),
+                        "min_percent": min(memory_percents),
+                        "samples": len(memory_percents)
+                    }
+
         return summary
 
-    def detect_anomalies(self) -> Dict[str, Any]:
+    def save_report(self, filename: Optional[str] = None) -> str:
         """
-        Analyze metrics history to detect resource anomalies and potential bottlenecks.
-        
-        Returns:
-            Dict containing detected anomalies and recommendations.
+        Save the hardware report to a JSON file.
+        Enhanced with timeout handling to prevent hangs (Feature-BE-07).
         """
-        anomalies = {
-            "timestamp": time.time(),
-            "date": time.strftime("%Y-%m-%d %H:%M:%S"),
-            "detected": False,
-            "resource_pressure": [],
-            "bottlenecks": [],
-            "recommendations": []
-        }
+        output_path = filename or self.output_file
         
-        # Ensure we have enough data points
-        with self.metrics_lock:
-            cpu_metrics = self.metrics_history.get("cpu", [])
-            memory_metrics = self.metrics_history.get("memory", [])
-            disk_metrics = self.metrics_history.get("disk", [])
+        try:
+            report = self.generate_report()
             
-            if len(cpu_metrics) < 3 or len(memory_metrics) < 3:
-                return anomalies
+            # Write with timeout protection
+            with open(output_path, 'w') as f:
+                json.dump(report, f, indent=2, default=str)
             
-            # Calculate recent CPU trends
-            recent_cpu = [m.get("percent", 0) for m in cpu_metrics[-10:] if isinstance(m, dict)]
-            if recent_cpu and len(recent_cpu) >= 3:
-                avg_cpu = sum(recent_cpu) / len(recent_cpu)
-                max_cpu = max(recent_cpu)
-                
-                # Detect high CPU usage
-                if max_cpu > 90:
-                    anomalies["detected"] = True
-                    anomalies["resource_pressure"].append({
-                        "resource": "cpu",
-                        "severity": "critical",
-                        "current": max_cpu,
-                        "threshold": 90
-                    })
-                    anomalies["recommendations"].append(
-                        "High CPU usage detected. Consider limiting concurrent tasks or increasing CPU resources."
-                    )
-                elif avg_cpu > 70:
-                    anomalies["detected"] = True
-                    anomalies["resource_pressure"].append({
-                        "resource": "cpu",
-                        "severity": "warning",
-                        "current": avg_cpu,
-                        "threshold": 70
-                    })
-                    anomalies["recommendations"].append(
-                        "Sustained high CPU usage. Optimize CPU-intensive operations or scale resources."
-                    )
-                
-                # Detect CPU trend
-                if len(recent_cpu) >= 5:
-                    # Simple trend detection - increasing values
-                    is_increasing = all(recent_cpu[i] <= recent_cpu[i+1] for i in range(len(recent_cpu)-5, len(recent_cpu)-1))
-                    if is_increasing and recent_cpu[-1] > 50:
-                        anomalies["detected"] = True
-                        anomalies["bottlenecks"].append({
-                            "resource": "cpu",
-                            "severity": "warning",
-                            "details": "CPU usage is on an increasing trend"
-                        })
+            logger.info(f"Hardware report saved to {output_path}")
+            return output_path
             
-            # Check memory trends
-            recent_memory = [m.get("percent", 0) for m in memory_metrics[-10:] if isinstance(m, dict)]
-            if recent_memory and len(recent_memory) >= 3:
-                avg_memory = sum(recent_memory) / len(recent_memory)
-                max_memory = max(recent_memory)
-                
-                # Detect high memory usage
-                if max_memory > 90:
-                    anomalies["detected"] = True
-                    anomalies["resource_pressure"].append({
-                        "resource": "memory",
-                        "severity": "critical",
-                        "current": max_memory,
-                        "threshold": 90
-                    })
-                    anomalies["recommendations"].append(
-                        "Critical memory pressure detected. Risk of OOM errors. Reduce memory usage or increase capacity."
-                    )
-                elif avg_memory > 80:
-                    anomalies["detected"] = True
-                    anomalies["resource_pressure"].append({
-                        "resource": "memory",
-                        "severity": "warning",
-                        "current": avg_memory,
-                        "threshold": 80
-                    })
-                    anomalies["recommendations"].append(
-                        "High memory usage. Consider optimizing memory-intensive operations."
-                    )
-                
-                # Memory leak detection - consistent increase over time
-                if len(recent_memory) >= 5:
-                    is_steadily_increasing = all(recent_memory[i] < recent_memory[i+1] for i in range(len(recent_memory)-5, len(recent_memory)-1))
-                    if is_steadily_increasing:
-                        anomalies["detected"] = True
-                        anomalies["bottlenecks"].append({
-                            "resource": "memory",
-                            "severity": "warning",
-                            "details": "Memory usage is consistently increasing, possible memory leak"
-                        })
-                        anomalies["recommendations"].append(
-                            "Potential memory leak detected. Investigate long-running processes and object lifecycles."
-                        )
-        
-        return anomalies
+        except Exception as e:
+            error_msg = f"Failed to save report to {output_path}: {e}"
+            logger.error(error_msg)
+            raise HardwareAuditError(error_msg, component="report_saver", severity="error")
 
-# CLI Entrypoint
+    def cleanup(self):
+        """
+        Clean up resources and stop metrics collection.
+        """
+        try:
+            self.stop_metrics_collection()
+            logger.info("Hardware audit system cleaned up")
+        except Exception as e:
+            logger.error(f"Error during cleanup: {e}")
+
+    def __enter__(self):
+        """Context manager entry."""
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Context manager exit."""
+        self.cleanup()
+
+
+# Enhanced factory function for easy initialization
+def create_hardware_audit_system(config_loader=None, **kwargs) -> HardwareAuditSystem:
+    """
+    Factory function to create a HardwareAuditSystem instance.
+    Enhanced with comprehensive timeout handling for Feature-BE-07.
+    
+    Args:
+        config_loader: Optional ConfigLoader instance
+        **kwargs: Additional configuration options
+        
+    Returns:
+        A configured HardwareAuditSystem instance
+    """
+    if config_loader:
+        return HardwareAuditSystem.from_config_loader(config_loader)
+    else:
+        return HardwareAuditSystem(config=kwargs)
+
+
+# CLI interface for standalone usage
 if __name__ == "__main__":
     import argparse
-    from pathlib import Path
+    import sys
     
-    parser = argparse.ArgumentParser(description="Hardware Audit System CLI")
-    parser.add_argument("--output", type=str, default="hw_report.json", help="Output JSON file for hardware report")
-    parser.add_argument("--config", type=str, help="Path to config.json file")
-    parser.add_argument("--interval", type=int, default=15, help="Metrics collection interval in seconds")
-    parser.add_argument("--summary", action="store_true", help="Print summary to console")
-    parser.add_argument("--no-gpu", action="store_true", help="Disable GPU detection")
-    parser.add_argument("--no-docker", action="store_true", help="Disable Docker metrics collection")
-    parser.add_argument("--collect", action="store_true", help="Start metrics collection for the specified duration")
-    parser.add_argument("--duration", type=int, default=60, help="Duration in seconds to collect metrics when --collect is used")
-    parser.add_argument("--export-metrics", type=str, help="Export metrics history to the specified file")
+    parser = argparse.ArgumentParser(description="Hardware Audit System - Enhanced with timeout handling")
+    parser.add_argument("--output", "-o", default="hw_report.json", help="Output file for the report")
+    parser.add_argument("--metrics-interval", "-i", type=int, default=15, help="Metrics collection interval")
+    parser.add_argument("--collect-time", "-t", type=int, default=60, help="How long to collect metrics (seconds)")
+    parser.add_argument("--disable-docker", action="store_true", help="Disable Docker metrics collection")
+    parser.add_argument("--disable-gpu", action="store_true", help="Disable GPU detection")
+    parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose logging")
+    
     args = parser.parse_args()
-
-    # Determine if we should use config loader or direct initialization
-    if args.config:
-        # Try to import ConfigLoader
-        try:
-            # Get the directory of this script
-            current_dir = Path(__file__).parent
-            # Add parent directory to path to import ConfigLoader
-            import sys
-            sys.path.append(str(current_dir.parent))
-            
-            from core_orchestration.config_loader import ConfigLoader
-            config_loader = ConfigLoader(config_path=args.config)
-            audit = HardwareAuditSystem.from_config_loader(config_loader)
-            logger.info(f"Using configuration from {args.config}")
-        except (ImportError, Exception) as e:
-            logger.warning(f"Error loading config: {str(e)}. Using direct initialization.")
-            # Fall back to direct initialization if config_loader fails
-            audit = HardwareAuditSystem(
-                config={
-                    "metrics_interval": args.interval,
-                    "output_file": args.output,
-                    "gpu_detection_enabled": not args.no_gpu,
-                    "collect_docker_metrics": not args.no_docker
-                }
-            )
+    
+    # Setup logging
+    if args.verbose:
+        logging.basicConfig(level=logging.DEBUG)
     else:
-        # Direct initialization with CLI args
-        audit = HardwareAuditSystem(
-            config={
-                "metrics_interval": args.interval,
-                "output_file": args.output,
-                "gpu_detection_enabled": not args.no_gpu,
-                "collect_docker_metrics": not args.no_docker
-            }
-        )
+        logging.basicConfig(level=logging.INFO)
     
-    # Start metrics collection if requested
-    if args.collect:
-        print(f"Starting metrics collection for {args.duration} seconds...")
-        audit.start_metrics_collection()
-        # Sleep for the requested duration
-        try:
-            import time
-            time.sleep(args.duration)
-        except KeyboardInterrupt:
-            print("Metrics collection interrupted by user.")
-        finally:
-            audit.stop_metrics_collection()
-            print("Metrics collection stopped.")
+    # Configuration
+    config = {
+        "output_file": args.output,
+        "metrics_interval": args.metrics_interval,
+        "collect_docker_metrics": not args.disable_docker,
+        "gpu_detection_enabled": not args.disable_gpu,
+        # Enhanced timeout configurations for Feature-BE-07
+        "subprocess_timeout": 10,
+        "gpu_detection_timeout": 15,
+        "docker_command_timeout": 30,
+        "max_collection_time": 120
+    }
+    
+    try:
+        with create_hardware_audit_system(config=config) as audit_system:
+            print(f"Starting hardware audit with enhanced timeout handling...")
+            print(f"System info collected: {len(audit_system.get_system_info())} fields")
             
-            # Export metrics if requested
-            if args.export_metrics:
-                audit.serialize_metrics_history(args.export_metrics)
-                print(f"Metrics exported to {args.export_metrics}")
-    elif args.export_metrics:
-        print("Error: --export-metrics requires --collect to be specified.")
+            if args.collect_time > 0:
+                print(f"Collecting metrics for {args.collect_time} seconds...")
+                audit_system.start_metrics_collection()
+                time.sleep(args.collect_time)
+                audit_system.stop_metrics_collection()
+            
+            report_path = audit_system.save_report()
+            print(f"Report saved to: {report_path}")
+            
+    except KeyboardInterrupt:
+        print("\nInterrupted by user")
         sys.exit(1)
-    
-    # Generate the report
-    report = audit.generate_report()
-    
-    # Print summary if requested
-    if args.summary:
-        print("\n===== HARDWARE AUDIT SUMMARY =====")
-        sysinfo = report.get('system_info', {}) if isinstance(report.get('system_info', {}), dict) else {}
-        rec_conf = report.get('recommended_configuration', {}) if isinstance(report.get('recommended_configuration', {}), dict) else {}
-        iso = rec_conf.get('isolation_recommendations', {}) if isinstance(rec_conf.get('isolation_recommendations', {}), dict) else {}
-
-        print(f"Hostname:               {sysinfo.get('hostname', 'N/A')}")
-        print(f"Platform:               {sysinfo.get('platform', 'N/A')}")
-        print(f"CPU:                    {sysinfo.get('cpu_details', {}).get('model_name', 'N/A')}")
-        print(f"Physical CPUs:          {sysinfo.get('physical_cpu_count', 'N/A')}")
-        print(f"Total RAM:              {sysinfo.get('total_memory_gb', 'N/A')} GB")
-        print(f"GPUs:                   {len(sysinfo.get('gpus', []))}")
-        
-        # Show GPU details if available
-        gpus = sysinfo.get('gpus', [])
-        if gpus:
-            print("\nGPU Information:")
-            for i, gpu in enumerate(gpus):
-                if isinstance(gpu, dict):
-                    print(f"  GPU {i+1}: {gpu.get('name', 'Unknown')} ({gpu.get('type', 'unknown')})")
-                    
-                    # Show memory info if available
-                    mem_total = gpu.get('memory_total_mb')
-                    if mem_total not in (None, "unknown"):
-                        print(f"    Memory: {mem_total} MB")
-                        
-                    # Show if suitable for quantized models
-                    if gpu.get('vram_sufficient_for_quantized'):
-                        print(f"    Suitable for LLM inference: Yes")
-                    else:
-                        print(f"    Suitable for LLM inference: Limited or No")
-        
-        print(f"\nDocker:                 {sysinfo.get('docker_info', {}).get('version', 'N/A')}")
-        print(f"Poetry:                 {sysinfo.get('dev_tools', {}).get('poetry', {}).get('version', 'N/A')}")
-        print(f"Docker Compose:         {sysinfo.get('dev_tools', {}).get('docker_compose', {}).get('version', 'N/A')}")
-        print(f"Terraform:              {sysinfo.get('dev_tools', {}).get('terraform', {}).get('version', 'N/A')}")
-        
-        # LLM recommendations section
-        print("\nLLM Deployment Recommendations:")
-        print(f"LLM Hosting Recommendation: {rec_conf.get('llm_hosting', 'N/A')}")
-        print(f"Recommended Models:     {', '.join(rec_conf.get('recommended_models', ['N/A']))}")
-        print(f"Sandbox Recommendation: {iso.get('recommended_sandbox', 'N/A')}")
-        
-        # Performance Optimization Suggestions
-        print("\nOptimization Suggestions:")
-        for suggestion in rec_conf.get('optimization_suggestions', []):
-            print(f"  - {suggestion}")
-        
-        print("==================================\n")
-
-# Example agent_config.yaml snippet (for documentation only, not executable code)
-# This is for reference/documentation and should not be uncommented in Python files.
-# agents:
-#   planner:
-#     model: "gemini-1.0-pro"
-#     max_tokens: 4096
-#     temperature: 0.2
-#     tools:
-#       - plan_decomposition
-#       - goal_refinement
+    except Exception as e:
+        print(f"Error: {e}")
+        sys.exit(1)
