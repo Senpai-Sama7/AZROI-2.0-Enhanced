@@ -3,7 +3,7 @@ import Card from './common/Card';
 import Icon from './common/Icon';
 import { ICON_COG, ICON_CHECK_CIRCLE, ICON_EXCLAMATION_TRIANGLE, ICON_INFORMATION_CIRCLE } from '../constants';
 import { MOCK_HW_REPORT } from '../constants';
-import type { SystemStatus } from '../types';
+import type { SystemStatus, WebSocketMessage } from '../types';
 
 interface MonitoringPanelProps {
   systemStatus: SystemStatus | null;
@@ -18,6 +18,7 @@ const MonitoringPanel: React.FC<MonitoringPanelProps> = ({
 }) => {
   const [expandedSection, setExpandedSection] = useState<string | null>(null);
   const [connectionQuality, setConnectionQuality] = useState<'good' | 'poor' | 'disconnected'>('disconnected');
+  const [dynamicSystemStatus, setDynamicSystemStatus] = useState<SystemStatus | null>(systemStatus);
 
   // Monitor connection quality
   useEffect(() => {
@@ -38,6 +39,24 @@ const MonitoringPanel: React.FC<MonitoringPanelProps> = ({
       setConnectionQuality('poor');
     }
   }, [wsConnection, lastHeartbeat]);
+
+  // Handle WebSocket messages
+  useEffect(() => {
+    if (!wsConnection) return;
+
+    const handleMessage = (event: MessageEvent) => {
+      const message: WebSocketMessage = JSON.parse(event.data);
+      if (message.event === 'system_status_update') {
+        setDynamicSystemStatus(message.data.systemStatus);
+      }
+    };
+
+    wsConnection.addEventListener('message', handleMessage);
+
+    return () => {
+      wsConnection.removeEventListener('message', handleMessage);
+    };
+  }, [wsConnection]);
 
   const toggleSection = (section: string) => {
     setExpandedSection(expandedSection === section ? null : section);
@@ -105,13 +124,13 @@ const MonitoringPanel: React.FC<MonitoringPanelProps> = ({
         title="System Status Overview" 
         titleIcon={<Icon path={ICON_COG} className="w-5 h-5 text-blue-400" />}
       >
-        {systemStatus ? (
+        {dynamicSystemStatus ? (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             <StatusItem
               label="Backend Health"
-              value={systemStatus.backend_health}
-              icon={getStatusIcon(systemStatus.backend_health)}
-              colorClass={getStatusColor(systemStatus.backend_health)}
+              value={dynamicSystemStatus.backend_health}
+              icon={getStatusIcon(dynamicSystemStatus.backend_health)}
+              colorClass={getStatusColor(dynamicSystemStatus.backend_health)}
             />
             <StatusItem
               label="WebSocket"
@@ -122,25 +141,25 @@ const MonitoringPanel: React.FC<MonitoringPanelProps> = ({
             />
             <StatusItem
               label="Open Interpreter"
-              value={systemStatus.open_interpreter_status}
-              icon={getStatusIcon(systemStatus.open_interpreter_status)}
-              colorClass={getStatusColor(systemStatus.open_interpreter_status)}
+              value={dynamicSystemStatus.open_interpreter_status}
+              icon={getStatusIcon(dynamicSystemStatus.open_interpreter_status)}
+              colorClass={getStatusColor(dynamicSystemStatus.open_interpreter_status)}
             />
             <StatusItem
               label="Memory Usage"
-              value={formatPercentage(systemStatus.memory_usage_percent)}
+              value={formatPercentage(dynamicSystemStatus.memory_usage_percent)}
               icon={ICON_INFORMATION_CIRCLE}
-              colorClass={systemStatus.memory_usage_percent > 80 ? 'text-red-400' : 'text-green-400'}
+              colorClass={dynamicSystemStatus.memory_usage_percent > 80 ? 'text-red-400' : 'text-green-400'}
             />
             <StatusItem
               label="CPU Usage"
-              value={formatPercentage(systemStatus.cpu_usage_percent)}
+              value={formatPercentage(dynamicSystemStatus.cpu_usage_percent)}
               icon={ICON_INFORMATION_CIRCLE}
-              colorClass={systemStatus.cpu_usage_percent > 80 ? 'text-red-400' : 'text-green-400'}
+              colorClass={dynamicSystemStatus.cpu_usage_percent > 80 ? 'text-red-400' : 'text-green-400'}
             />
             <StatusItem
               label="Active Agents"
-              value={systemStatus.agent_count.toString()}
+              value={dynamicSystemStatus.agent_count.toString()}
               icon={ICON_INFORMATION_CIRCLE}
               colorClass="text-blue-400"
             />
@@ -151,9 +170,9 @@ const MonitoringPanel: React.FC<MonitoringPanelProps> = ({
           </div>
         )}
         
-        {systemStatus && (
+        {dynamicSystemStatus && (
           <div className="mt-4 pt-4 border-t border-gray-700 text-xs text-gray-400">
-            Last updated: {formatUptime(systemStatus.last_updated)}
+            Last updated: {formatUptime(dynamicSystemStatus.last_updated)}
           </div>
         )}
       </Card>

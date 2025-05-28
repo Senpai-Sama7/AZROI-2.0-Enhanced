@@ -3,6 +3,7 @@ import Card from './common/Card';
 import Icon from './common/Icon';
 import { ICON_COG, ICON_CHEVRON_DOWN } from '../constants';
 import LoadingSpinner from './common/LoadingSpinner';
+import { checkApiKeyValidity } from '../services/geminiService'; // Import the validation function
 
 // This interface reflects the structure of `backend/config.json`
 // and what the backend API GET /api/config returns and POST /api/config expects.
@@ -58,6 +59,7 @@ const ConfigPanel: React.FC = () => {
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [isSaving, setIsSaving] = useState<boolean>(false);
   const [feedback, setFeedback] = useState<{ message: string; type: 'success' | 'error'} | null>(null);
+  const [validationErrors, setValidationErrors] = useState<{ [key: string]: string }>({}); // State for validation errors
 
   const fetchConfig = async () => {
     setIsLoading(true);
@@ -126,9 +128,30 @@ const ConfigPanel: React.FC = () => {
         setConfig(prev => ({ ...prev, [name]: processedValue }));
     }
     setFeedback(null); 
+    setValidationErrors(prev => ({ ...prev, [name]: '' })); // Clear validation error for the field
   };
 
   const handleSave = async () => {
+    // Client-side validation for API keys
+    const apiKeyFields = ['azure_api_key_env_var', 'openai_api_key_env_var'];
+    const newValidationErrors: { [key: string]: string } = {};
+
+    for (const field of apiKeyFields) {
+      const apiKey = config.open_interpreter_config?.[field];
+      if (apiKey) {
+        const { valid, message } = await checkApiKeyValidity(apiKey);
+        if (!valid) {
+          newValidationErrors[field] = message;
+        }
+      }
+    }
+
+    if (Object.keys(newValidationErrors).length > 0) {
+      setValidationErrors(newValidationErrors);
+      setFeedback({ message: 'Validation errors found. Please correct them before saving.', type: 'error' });
+      return; // Prevent form submission if validation fails
+    }
+
     setIsSaving(true);
     setFeedback(null);
     try {
@@ -317,6 +340,13 @@ const ConfigPanel: React.FC = () => {
             section="open_interpreter_config"
             min={0}
           />
+          {/* Display validation errors for API keys */}
+          {validationErrors['azure_api_key_env_var'] && (
+            <div className="text-red-500 text-xs mt-1">{validationErrors['azure_api_key_env_var']}</div>
+          )}
+          {validationErrors['openai_api_key_env_var'] && (
+            <div className="text-red-500 text-xs mt-1">{validationErrors['openai_api_key_env_var']}</div>
+          )}
         </ConfigSection>
 
         {/* GCP Config Defaults */}
