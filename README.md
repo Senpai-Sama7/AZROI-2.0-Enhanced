@@ -217,3 +217,11 @@ This setup is complex. Patience and careful attention to logs (both frontend bro
 ## Testing
 
 For information about running tests and adding new tests, see [TESTING.md](TESTING.md).
+
+## Enhanced UI Reliability
+
+### Configuration Panel UI
+The Configuration Panel now includes client-side validation for API key input fields. This ensures that users receive immediate feedback on any invalid API keys before attempting to save the configuration. This enhancement improves user experience by preventing malformed API keys from being submitted to the backend.
+
+### Monitoring Panel Display
+The Monitoring Panel has been updated to ensure that UI components dynamically reflect new metric data received via WebSocket. This means that all corresponding UI elements within the Monitoring Panel will update automatically and dynamically in near real-time, without requiring a manual page refresh.

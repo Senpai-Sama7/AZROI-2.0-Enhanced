@@ -157,8 +157,12 @@ Once you submit your project idea, you'll be taken to the dashboard where you ca
 #### 3. Monitoring
 This view provides system performance metrics and resource utilization information.
 
+The Monitoring Panel has been updated to ensure that UI components dynamically reflect new metric data received via WebSocket. This means that all corresponding UI elements within the Monitoring Panel will update automatically and dynamically in near real-time, without requiring a manual page refresh.
+
 #### 4. Configuration
 Here you can view and adjust various system settings including your cloud provider preference (GCP or Azure).
+
+The Configuration Panel now includes client-side validation for API key input fields. This ensures that users receive immediate feedback on any invalid API keys before attempting to save the configuration. This enhancement improves user experience by preventing malformed API keys from being submitted to the backend.
 
 ### Help & Settings
 Access this by clicking the question mark icon in the top-right corner. Here you can:
