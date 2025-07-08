@@ -1,7 +1,8 @@
 # How to Use: Autonomous AI Architect
 
+---
 Welcome to the Autonomous AI Architect system! This guide will walk you through everything you need to know to get started, even if you have no technical background. The system allows you to turn high-level ideas into fully functional software applications with minimal technical input.
-
+---
 
 ## What Is This System?
 
